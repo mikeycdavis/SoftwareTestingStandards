@@ -1,0 +1,28 @@
+# SWT-B04 design note: test evidence envelope and core release-evidence schema
+
+Status: **PROPOSAL, not frozen.** Fields, names, versioning and acceptance criteria need an owner decision. Apple/Android profiles must not freeze until this is frozen.
+
+## 1. Test evidence envelope (per test run)
+
+| Field | Purpose | Threat addressed |
+| --- | --- | --- |
+| `build.artifactDigest`, `build.sourceRevision`, `build.dirty` | Bind a result to the exact build | Green run on a different build (T1) |
+| `run.command`, `run.exitCode`, `run.startedAt`, `run.finishedAt` | What was run and when | Stale/copied results (T2); AI "tests pass" claims without a run (T9) |
+| `environment.declared`, `environment.differencesFromProduction[]` | Fidelity statement | Environment drift (T11) |
+| `result.summary`, `result.skipped[]`, `result.retries[]`, `result.quarantined[]` | Disclosed instability and scope reduction | Flaky retry-to-green (T4), silent skips (T6) |
+| `evidence.kind` = `automated | manual` | Never upgraded into each other | Manual presented as automated |
+| `retention.location`, `retention.hash` | Where the artifact lives | Unverifiable evidence |
+
+Surfaces: static, ingested, attested. A field absent from the evidence yields `not-evaluated`, never pass.
+
+## 2. Core release-evidence schema (`release-evidence`, semver)
+
+Groups: artifact identity; source; build environment; tests (links to envelopes, run/not-run matrix cells); approvals (identifiers only); provenance; `signing.status` (`not-evaluated | attested | ingested | failed`, fingerprints only); distribution stage; residual risks (owner, review date); rollback (method, tested, evidence ref).
+
+Extension model: profiles (`apple/1`, `android/1`) pin an exact `coreVersion`, add fields only in their own namespace, and may not redefine core fields. Minor versions additive; breaking change requires a major bump. The core imports nothing; profiles never import each other. Distribution: vendored versioned copy with provenance header, hash and a drift conformance test (decision S19b).
+
+## 3. Safety
+No secret material in any field by construction; a secret-pattern guard on ingestion; fingerprints and identifiers only.
+
+## 4. Open items for the owner
+Exact field names and types; whether `dirty` blocks release evidence; retention minimums. None decided here.
