@@ -4,6 +4,6 @@
   "private": true,
   "description": "Standards for tester practice and test evidence. Unreleased skeleton; no standards implemented.",
   "type": "module",
-  "scripts": { "test": "node --test test/*.test.mjs" },
+  "scripts": { "test": "node --test" },
   "engines": { "node": ">=18" }
 }
