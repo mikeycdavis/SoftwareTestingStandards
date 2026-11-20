@@ -22,7 +22,7 @@ Groups: artifact identity; source; build environment; tests (links to envelopes,
 Extension model: profiles (`apple/1`, `android/1`) pin an exact `coreVersion`, add fields only in their own namespace, and may not redefine core fields. Minor versions additive; breaking change requires a major bump. The core imports nothing; profiles never import each other. Distribution: vendored versioned copy with provenance header, hash and a drift conformance test (decision S19b).
 
 ## 3. Safety
-No secret material in any field by construction; a secret-pattern guard on ingestion; fingerprints and identifiers only.
+Proposed requirement (not yet enforced; no guard exists in this repository): evidence fields must carry fingerprints and identifiers only. Free-text fields such as `run.command`, environment declarations, result summaries and retention locations are the likely carriers of credentials, so a future schema must restrict their content and a validator must reject recognisable secret patterns on ingestion. Pattern detection cannot guarantee absence of secrets; absence of a detected secret is not evidence of none.
 
 ## 4. Open items for the owner
 Exact field names and types; whether `dirty` blocks release evidence; retention minimums. None decided here.
