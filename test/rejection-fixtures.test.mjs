@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readdirSync, readFileSync } from "node:fs";
-import { check, evaluate, scanSecrets } from "../experimental/check-release-evidence.mjs";
+import { check, evaluate, scanSecrets, MAX_DEPTH, MAX_NODES } from "../experimental/check-release-evidence.mjs";
 const dir = new URL("../fixtures/release-evidence/", import.meta.url);
 const VERDICTS = ["pass", "reject", "not-evaluated"];
 // Fixture metadata (verdict, reason, case) is stripped before evaluation so it cannot trip or mask a check.
@@ -85,3 +85,46 @@ for (const unit of ADVERSARIAL) {
     assert.ok(rec < LIMIT_MS, "record scan took " + rec.toFixed(0) + "ms");
   });
 }
+
+// Robustness: hostile shapes must be rejected, never thrown. These cannot be expressed as JSON fixtures (cycles, BigInt)
+// or are impractically large as files (20,000 levels), so they are built here from the valid baseline fixture.
+const baseline = () => strip(JSON.parse(readFileSync(new URL("valid-baseline.json", dir))));
+const chain = (levels, wrap) => { let v = {}; for (let i = 0; i < levels; i++) v = wrap(v); return v; };
+const rejectsWith = (record, substring) => {
+  let got;
+  assert.doesNotThrow(() => { got = evaluate(record); });
+  assert.equal(got.verdict, "reject");
+  assert.ok(got.errors.some((e) => e.includes(substring)), "expected " + substring + " got " + JSON.stringify(got.errors));
+  assert.doesNotThrow(() => check(record));
+};
+test("20,000-level object nesting in a profile is rejected, not thrown", () => {
+  rejectsWith({ ...baseline(), apple: chain(20000, (v) => ({ a: v })) }, "nesting deeper than " + MAX_DEPTH);
+});
+test("20,000-level array nesting inside a core group is rejected, not thrown", () => {
+  const r = baseline(); r.tests[0].extra = chain(20000, (v) => [v]);
+  rejectsWith(r, "nesting deeper than " + MAX_DEPTH);
+});
+test("nesting at exactly MAX_DEPTH passes; one level more is rejected", () => {
+  // record = depth 1 and r.apple = depth 2; chain(k) is k + 1 nested objects, so its innermost one is at depth k + 2
+  assert.equal(evaluate({ ...baseline(), apple: chain(MAX_DEPTH - 2, (v) => ({ a: v })) }).verdict, "pass");
+  rejectsWith({ ...baseline(), apple: chain(MAX_DEPTH - 1, (v) => ({ a: v })) }, "nesting deeper");
+});
+test("circular objects are rejected, not thrown", () => {
+  const a = baseline(); a.apple = {}; a.apple.self = a.apple;
+  rejectsWith(a, "circular reference");
+  const b = baseline(); b.loop = b;
+  rejectsWith(b, "circular reference");
+  const c = baseline(); c.tests[0].runs = [c.tests];
+  rejectsWith(c, "circular reference");
+});
+test("a value shared by two parents without a cycle is not circular", () => {
+  const shared = { scheme: "Release" };
+  assert.equal(evaluate({ ...baseline(), apple: { a: shared, b: [shared, shared] } }).verdict, "pass");
+});
+test("exponential shared-reference graphs are bounded by MAX_NODES", () => {
+  const r = { ...baseline(), apple: chain(40, (v) => ({ l: v, r: v })) };
+  rejectsWith(r, "more than " + MAX_NODES + " values");
+});
+test("a record that cannot be serialised is rejected, not thrown", () => {
+  rejectsWith({ ...baseline(), apple: { big: 1n } }, "cannot be serialised");
+});
