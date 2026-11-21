@@ -1,0 +1,9 @@
+{
+  "name": "software-testing-standards",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Standards for tester practice and test evidence. Unreleased skeleton; no standards implemented.",
+  "type": "module",
+  "scripts": { "test": "node --test" },
+  "engines": { "node": ">=18" }
+}
