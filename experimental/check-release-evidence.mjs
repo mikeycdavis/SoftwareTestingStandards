@@ -230,7 +230,7 @@ export function evaluate(r) {
 
   if (!has(r, "tests")) absent("tests required and non-empty (no tests is not a pass)");
   else if (!Array.isArray(r.tests) || r.tests.length === 0) errors.push("tests required and non-empty (no tests is not a pass)");
-  else r.tests.forEach((t, i) => {
+  else Array.from(r.tests).forEach((t, i) => { // Array.from turns holes into undefined, so a sparse array rejects
     if (!isObj(t)) { errors.push("tests[" + i + "] must be an object"); return; }
     if (!has(t, "artifactDigest")) absent("test artifactDigest required (missing binding)");
     else if (!nonEmpty(t.artifactDigest)) errors.push("test artifactDigest required (missing binding: not a non-empty string)");

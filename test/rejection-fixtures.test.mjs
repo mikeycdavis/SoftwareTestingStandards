@@ -155,3 +155,13 @@ test("an oversized array is rejected when it is the last container visited", () 
 test("a record that cannot be serialised is rejected, not thrown", () => {
   rejectsWith({ ...baseline(), apple: { big: 1n } }, "cannot be serialised");
 });
+
+test("a sparse tests array (holes) is rejected, not skipped", () => {
+  for (const stage of ["internal", "production"]) {
+    const r = { ...baseline(), stage, tests: new Array(1) };
+    rejectsWith(r, "tests[0] must be an object");
+    assert.notEqual(evaluate(r).verdict, "pass");
+  }
+  const mixed = baseline(); mixed.tests = [mixed.tests[0], , mixed.tests[0]];
+  rejectsWith(mixed, "tests[1] must be an object");
+});
