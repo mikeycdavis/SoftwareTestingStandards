@@ -16,8 +16,9 @@
 //     automated tests only, command (non-empty string) and exitCode (must be 0); signing.status (not-evaluated | attested |
 //     ingested | failed); stage (internal | test | staged | production); source.dirty (boolean, required at every stage).
 //   - stage "production" additionally requires source.dirty === false (a dirty source is valid below production).
-//   - a test with manual: true labelled evidenceKind "automated" is rejected; a manual test carrying command or exitCode
-//     (in any form) is rejected, because the manual branch carries neither.
+//   - test.manual is optional; when present it must be a boolean (manual: "false", 1, null are rejected as an invalid
+//     type). A test with manual === true labelled evidenceKind "automated" is rejected; a manual test carrying command or
+//     exitCode (in any form) is rejected, because the manual branch carries neither.
 //   - a pattern-based secret scan over the serialised record (SECRET_PATTERNS below; scanSecrets is exported). DEFENCE IN
 //     DEPTH ONLY: the patterns are a known, incomplete list; a non-detection does not prove that no secret is present.
 //     ReDoS: each pattern is a plain literal, starts with a fixed literal, or is anchored by a lookbehind, and every
@@ -27,18 +28,31 @@
 //       - a Bearer value needs 20+ token characters, or 8+ that include a digit (short all-letter tokens are missed);
 //       - a numeric value is flagged only under keys naming a password/passwd/passphrase/pwd/secret/api-key/private-key
 //         and only with 6+ digits; token-count or ttl style keys (max_tokens, tokenExpirySeconds) are not;
-//       - pass= / passwd= values made only of digits (pass=12 fail=0 summaries) are not flagged; PWD= / "pwd" values that
-//         are paths (/..., ~..., C:\...) are not flagged;
+//       - pass= / passwd= test summaries are not flagged: 12, 12/12, 100% or all, ending at whitespace, ; & , or the end
+//         of the value (pass=12 fail=0, pass=12,fail=0);
+//       - pwd= values and "pwd" key values that are paths (/..., ~..., C:\...) are not flagged, nor pwd=. / pwd=.. /
+//         pwd=$(pwd); the key-name rule counts pwd only inside a longer key (dbPwd, db_pwd), not "pwd" or "OLDPWD";
+//       - secret-named JSON keys that are metadata are not flagged: a key ending in ref, name, type, endpoint, scan, scans,
+//         scanned, scanner(s) or scanning (passwordSecretRef, secretName, tokenType, token_endpoint, secretScan,
+//         secret_scanning), and token inside
+//         tokenize/tokenizer does not count. A real secret under such a key is missed;
 //       - url-credentials needs scheme://user:password@host where host is a hostname with optional :port followed by
 //         /, ?, #, whitespace or the end; image refs such as docker://alpine:3.19@sha256:... are not flagged;
-//       - pure variable or secret REFERENCES are accepted as non-secrets in CLI flag values, mysql -p values, secret-named
-//         JSON string values and pass=/pwd= assignments: $VAR, ${VAR}, ${{ ... }}, %VAR%, optionally quoted, and only
-//         when the whole value is the reference. A literal next to or appended to a reference is still flagged.
-//         The literal-word patterns (password=, "password", client_secret, privateKey, AWS_SECRET_ACCESS_KEY) flag
-//         whatever value follows, references included.
-//   - robustness: a record nested deeper than MAX_DEPTH levels, with more than MAX_NODES values, containing a circular
-//     reference, or that cannot be serialised (for example a BigInt) is rejected before any other check; evaluate()
-//     does not throw for such records.
+//       - pure REFERENCES and MASKS are accepted as non-secrets in CLI flag values, mysql -p values, secret-named JSON
+//         string values, "pwd" values and pass=/pwd= assignments. A reference is $NAME, ${NAME}, %NAME% or ${{ a.b.c }}
+//         (dotted identifiers only, at most one space of padding; ${{ 'literal' }}, operators and calls are flagged). A
+//         mask is *** (3 to 64 stars), <redacted> or [redacted], any case. In a shell value it must be the WHOLE value:
+//         bare, 'quoted' or "quoted" with matching quotes, followed by whitespace or the end of the value (; and & also end
+//         a pass=/pwd= value). Anything attached ($X'abc', "$X"abc, $X\abc, ${X}abc) is flagged, and so is a reference
+//         followed by ; | ) or other shell syntax in a CLI or mysql value (a known false positive);
+//       - a literal secret shaped like $Name, ${Name} or %Name% is indistinguishable from a variable reference and is
+//         accepted; the scan cannot know what a reference expands to;
+//       - the literal-word patterns (password=, "password", client_secret, privateKey, AWS_SECRET_ACCESS_KEY) flag
+//         whatever value follows, references and masks included.
+//   - robustness: a record nested deeper than MAX_DEPTH levels, with more than MAX_NODES values (every object, array and
+//     primitive counts, the record itself included, each time it is reached), containing a circular reference, or that
+//     cannot be serialised (for example a BigInt) is rejected before any other check; evaluate() does not throw for such
+//     records.
 //   - core group names (CORE) may not appear as a key at ANY depth (objects and arrays) inside any non-core top-level
 //     namespace (profile redefinition).
 // NOT validated here: approvals, residualRisks, testRuns, rollback, provenance and distribution are neither required
@@ -54,15 +68,36 @@ export const CORE = ["source", "artifact", "tests", "testRuns", "signing", "stag
 const SIGNING = ["not-evaluated", "attested", "ingested", "failed"];
 const STAGES = ["internal", "test", "staged", "production"];
 const KINDS = ["automated", "manual"];
-// One pattern per alternative so each is covered by its own fixture. Case-sensitive except where flagged /i.
-// REF (inlined below) = a pure reference: ${{ ... }} | ${NAME} | $NAME | %NAME%.
+// One pattern per alternative so each is covered by its own fixture. Case-sensitive except where flagged "i".
+// The scan runs over JSON.stringify(record), so a double quote inside a string value appears as \" and a tab as \t.
+const R = String.raw;
+const ID = R`[A-Za-z_][A-Za-z0-9_]{0,127}`;
+// ${{ secrets.NAME }} / ${{ env.NAME }} / ${{ github.x.y }}: dotted identifiers only, at most one space of padding
+// inside each brace pair; no quotes, operators or function calls.
+const GHA = R`\$\{\{ ?[A-Za-z_][A-Za-z0-9_-]{0,63}(?:\.[A-Za-z_][A-Za-z0-9_-]{0,63}){0,8} ?\}\}`;
+// a pure reference: ${{ ... }} | ${NAME} | $NAME | %NAME%
+const REF = "(?:" + GHA + R`|\$\{` + ID + R`\}|\$` + ID + "|%" + ID + "%)";
+// a masked value: *** (3 to 64 stars), <redacted>, [redacted] (any case)
+const MASK = R`(?:\*{3,64}|<redacted>|\[redacted\])`;
+// not a secret: a pure reference or a mask
+const NS = "(?:" + REF + "|" + MASK + ")";
+// a whole shell value that is not a secret: bare, 'single quoted' or "double quoted" (serialised as \"...\"); the
+// closing quote must match the opening one
+const WHOLE = "(?:" + NS + "|'" + NS + "'|" + R`\\"` + NS + R`\\"` + ")";
+// end of a shell value: whitespace, a serialised tab/newline/return, the end of the serialised string, or the end
+const END = R`(?=\s|\\[tnr]|"|$)`;
+// end of an assignment value: as END, plus ; and & (connection strings, query strings)
+const END_ASSIGN = R`(?=[;&\s]|\\[tnr]|"|$)`;
+const rx = (src, flags) => new RegExp(src, flags);
 export const SECRET_PATTERNS = [
   ["pem-private-key", /PRIVATE KEY/],
   ["privateKey-word", /privateKey/],
   ["password-assign", /password=/i],
   ["password-key", /"password"/i],
-  ["pass-assign", /(?<![A-Za-z0-9])pass(?:wd)?=(?![0-9]{1,32}(?![^;"\s&\\])|(?:\$\{\{[^}"]{1,256}\}\}|\$\{[A-Za-z_][A-Za-z0-9_]{0,127}\}|\$[A-Za-z_][A-Za-z0-9_]{0,127}|%[A-Za-z_][A-Za-z0-9_]{0,127}%)(?![^;"\s&\\]))[^;"\s&\\]/i],
-  ["pwd-assign", /(?<![A-Za-z0-9])pwd=(?![\/~]|[A-Za-z]:(?:\\\\|\/)|(?:\$\{\{[^}"]{1,256}\}\}|\$\{[A-Za-z_][A-Za-z0-9_]{0,127}\}|\$[A-Za-z_][A-Za-z0-9_]{0,127}|%[A-Za-z_][A-Za-z0-9_]{0,127}%)(?![^;"\s&\\]))[^;"\s&\\]/i],
+  // pass= / passwd=, except a test summary (12, 12/12, 100%, all; then an END_ASSIGN or ",") or a whole non-secret value
+  ["pass-assign", rx(R`(?<![A-Za-z0-9])pass(?:wd)?=(?!(?:[0-9]{1,32}(?:\/[0-9]{1,32}|%)?|all)(?=[;&,\s]|\\[tnr]|"|$)|` + WHOLE + END_ASSIGN + R`)(?:'|\\")?[^;"\s&\\]`, "i")],
+  // pwd=, except a path (/..., ~..., C:\..., . or ..), $(pwd), or a whole non-secret value
+  ["pwd-assign", rx(R`(?<![A-Za-z0-9])pwd=(?![\/~]|[A-Za-z]:(?:\\\\|\/)|\.{1,2}(?=[\/;&\s]|\\|"|$)|\$\(pwd\)|` + WHOLE + END_ASSIGN + R`)(?:'|\\")?[^;"\s&\\]`, "i")],
   ["github-ghp", /(?<![A-Za-z0-9_])ghp_[A-Za-z0-9]{20,255}/],
   ["github-pat", /(?<![A-Za-z0-9_])github_pat_[A-Za-z0-9_]{20,255}/],
   ["github-gho", /(?<![A-Za-z0-9_])gho_[A-Za-z0-9]{20,255}/],
@@ -73,16 +108,19 @@ export const SECRET_PATTERNS = [
   ["aws-asia", /(?<![A-Z0-9])ASIA[0-9A-Z]{16}(?![0-9A-Z])/],
   ["aws-secret-env", /aws_secret_access_key/i],
   ["client-secret", /client_secret/i],
-  // a JSON key whose name contains a secret word, holding a non-empty string that is not a pure reference
-  ["secret-key-name", /"(?=[^"\\]{0,128}?(?:password|passwd|passphrase|secret|token|apikey|api_key|privatekey|private_key))[^"\\]{1,128}"\s{0,8}:\s{0,8}"(?!(?:\$\{\{[^}"]{1,256}\}\}|\$\{[A-Za-z_][A-Za-z0-9_]{0,127}\}|\$[A-Za-z_][A-Za-z0-9_]{0,127}|%[A-Za-z_][A-Za-z0-9_]{0,127}%)")[^"]/i],
+  // a JSON key whose name contains a secret word, holding a non-empty string that is not wholly a reference or a mask.
+  // pwd counts only inside a longer name (dbPwd, db_pwd; not pwd itself or OLDPWD, which pwd-key handles); token does
+  // not count inside tokenize/tokenizer; metadata keys ending in ref, name, type, endpoint or scan(s/ned/ner/ners/ning)
+// are not flagged.
+  ["secret-key-name", rx(R`"(?=[^"\\]{0,128}?(?:password|passwd|passphrase|(?<=[^"\\])(?<!old)pwd|secret|token(?!iz)|apikey|api_key|privatekey|private_key))[^"\\]{1,128}(?<!ref|name|type|endpoint|scan(?:s|ned|ners?|ning)?)"\s{0,8}:\s{0,8}"(?!` + NS + R`")[^"]`, "i")],
   // a JSON key naming a password-like secret (not token counts or ttls), holding a 6+ digit number
   ["secret-key-number", /"(?=[^"\\]{0,128}?(?:password|passwd|passphrase|pwd|secret|apikey|api_key|privatekey|private_key))[^"\\]{1,128}"\s{0,8}:\s{0,8}-?\d{6}/i],
-  // the JSON key "pwd" holding a non-empty string that is not a path or a pure reference
-  ["pwd-key", /"pwd"\s{0,8}:\s{0,8}"(?![\/~]|[A-Za-z]:(?:\\\\|\/)|(?:\$\{\{[^}"]{1,256}\}\}|\$\{[A-Za-z_][A-Za-z0-9_]{0,127}\}|\$[A-Za-z_][A-Za-z0-9_]{0,127}|%[A-Za-z_][A-Za-z0-9_]{0,127}%)")[^"]/i],
-  // a CLI flag naming a secret, then = or spaces/tabs, then a value (plain, 'single' or "double" quoted) that is not a pure reference
-  ["cli-secret-arg", /(?<![A-Za-z0-9_-])--?(?:password|passwd|pass|passphrase|token|secret|api[-_]?key|client[-_]secret|access[-_]token|auth[-_]token)(?:=|(?:\s|\\t){1,8})(?:'|\\")?(?!(?:\$\{\{[^}"]{1,256}\}\}|\$\{[A-Za-z_][A-Za-z0-9_]{0,127}\}|\$[A-Za-z_][A-Za-z0-9_]{0,127}|%[A-Za-z_][A-Za-z0-9_]{0,127}%)(?:\\?["']|\s|\\[tnr]|$))[^\s"'\\-]/i],
+  // the JSON key "pwd" holding a non-empty string that is not a path or wholly a reference or a mask
+  ["pwd-key", rx(R`"pwd"\s{0,8}:\s{0,8}"(?![\/~]|[A-Za-z]:(?:\\\\|\/)|` + NS + R`")[^"]`, "i")],
+  // a CLI flag naming a secret, then = or spaces/tabs, then a value that is not a WHOLE non-secret value followed by END
+  ["cli-secret-arg", rx(R`(?<![A-Za-z0-9_-])--?(?:password|passwd|pass|passphrase|token|secret|api[-_]?key|client[-_]secret|access[-_]token|auth[-_]token)(?:=|(?:\s|\\t){1,8})(?!` + WHOLE + END + R`)(?:'|\\")?[^\s"'\\-]`, "i")],
   // mysql client -p<password> (first or later argument, optionally quoted); bare -p (prompt) and -P<port> do not match
-  ["mysql-inline-password", /(?<![A-Za-z0-9_])mysql[a-z]{0,12}(?:\s[^"]{0,200}?)?\s-p(?:'|\\")?(?!(?:\$\{\{[^}"]{1,256}\}\}|\$\{[A-Za-z_][A-Za-z0-9_]{0,127}\}|\$[A-Za-z_][A-Za-z0-9_]{0,127}|%[A-Za-z_][A-Za-z0-9_]{0,127}%)(?:\\?["']|\s|$))[^\s"'\\-]/],
+  ["mysql-inline-password", rx(R`(?<![A-Za-z0-9_])mysql[a-z]{0,12}(?:\s[^"]{0,200}?)?\s-p(?!` + WHOLE + END + R`)(?:'|\\")?[^\s"'\\-]`)],
   ["url-credentials", /(?<![A-Za-z0-9+.-])[A-Za-z][A-Za-z0-9+.-]{0,31}:\/\/[^\s\/:@"\\]{1,128}:[^\s\/@"\\]{1,128}@[A-Za-z0-9.-]{1,253}(?::\d{1,5})?(?=[\/?#\s'"\\]|$)/],
   ["slack-token", /(?<![A-Za-z0-9])xox[abposr]-[A-Za-z0-9-]{10,255}/],
   ["npm-token", /(?<![A-Za-z0-9_])npm_[A-Za-z0-9]{36}(?![A-Za-z0-9])/],
@@ -108,22 +146,34 @@ const field = (g, key) => (g === ABSENT || !has(g, key) ? ABSENT : g[key]);
 export const MAX_DEPTH = 256;
 export const MAX_NODES = 1000000;
 // Iterative walk (no recursion, so no stack overflow): returns an error string for a record that is too deep, too large
-// or circular, else null. A value shared by two parents without a cycle is not circular.
+// or circular, else null. A value shared by two parents without a cycle is not circular. Every value counts toward
+// MAX_NODES (the record itself, each object and array, and each primitive), counting a value each time it is reached.
+// The count is checked before a child is scheduled, so the walk's own allocation is bounded by MAX_NODES.
+const TOO_MANY = "record has more than " + MAX_NODES + " values";
 function shapeError(r) {
   const stack = [{ v: r, d: 1 }];
   const onPath = new Set();
-  let nodes = 0;
+  let nodes = 1;
+  const schedule = (x, d) => { if (x !== null && typeof x === "object") stack.push({ v: x, d }); };
   while (stack.length) {
     const f = stack.pop();
     if (f.exit) { onPath.delete(f.v); continue; }
     const v = f.v;
-    if (v === null || typeof v !== "object") continue;
     if (onPath.has(v)) return "record contains a circular reference";
     if (f.d > MAX_DEPTH) return "record nesting deeper than " + MAX_DEPTH + " levels";
-    if (++nodes > MAX_NODES) return "record has more than " + MAX_NODES + " values";
     onPath.add(v);
     stack.push({ v, exit: true });
-    for (const x of Array.isArray(v) ? v : Object.values(v)) stack.push({ v: x, d: f.d + 1 });
+    if (Array.isArray(v)) {
+      if (nodes + v.length > MAX_NODES) return TOO_MANY;
+      nodes += v.length;
+      for (let i = 0; i < v.length; i++) schedule(v[i], f.d + 1);
+    } else {
+      for (const k in v) {
+        if (!Object.prototype.hasOwnProperty.call(v, k)) continue;
+        if (++nodes > MAX_NODES) return TOO_MANY;
+        schedule(v[k], f.d + 1);
+      }
+    }
   }
   return null;
 }
@@ -172,7 +222,9 @@ export function evaluate(r) {
     else if (artifactDigest !== undefined && t.artifactDigest !== artifactDigest) errors.push("test bound to a different digest");
     if (!has(t, "evidenceKind")) { absent("test evidenceKind required: automated or manual"); return; }
     if (!KINDS.includes(t.evidenceKind)) { errors.push("test evidenceKind required: automated or manual (invalid value)"); return; }
-    if (t.manual && t.evidenceKind === "automated") errors.push("manual evidence labelled automated");
+    // manual is optional; when present it must be a boolean, and only manual === true marks manual evidence
+    if (has(t, "manual") && typeof t.manual !== "boolean") errors.push("test manual must be a boolean (invalid type)");
+    else if (t.manual === true && t.evidenceKind === "automated") errors.push("manual evidence labelled automated");
     if (t.evidenceKind === "automated") {
       if (!has(t, "command")) absent("automated evidence needs command (non-empty string)");
       else if (!nonEmpty(t.command)) errors.push("automated evidence needs command (non-empty string)");

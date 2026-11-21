@@ -28,6 +28,8 @@ for (const f of readdirSync(dir).filter((x) => x.endsWith(".json"))) {
     assert.ok(errs.length > 0, "check() must never return an empty list unless the verdict is pass");
     if (r.verdict === "reject") {
       for (const reason of reasons) assert.ok(got.errors.some((e) => e.includes(reason)), "expected rejection for: " + reason + " got " + JSON.stringify(got));
+      // isolation: a reject fixture fails only for what its reasons name
+      for (const e of got.errors) assert.ok(reasons.some((reason) => e.includes(reason)), "unexpected error: " + e);
     } else {
       assert.deepEqual(got.errors, [], "not-evaluated means no present-but-invalid value");
       for (const reason of reasons) {
@@ -70,6 +72,8 @@ const ADVERSARIAL = [
   "AKIA", "ASIA", "ghp_", "github_pat_", "gho_", "Bearer ", "Bearer a", "Bearer 1", "--password ", "--password -", "-p",
   "mysql ", "mysql -", "a://", "a://a:", "a://a:a", "xoxb-", "npm_", "AIza", "sk-proj-", "sk_live_", "pass=", "pwd=",
   "AccountKey=", "SharedAccessSignature=", "?sig=", "&", "PRIVATE ", "client_", "aws_secret_",
+  "--token ${{ a", "--token ${{ a.", "--token '$a", "--token \"$a", "--token ***", "mysql -p'$a", "pass=1/", "pass='$a",
+  "pwd=.", "\"dbpwd", "\"secretscan", "\"a_token\":\"${{ a.b", "\"a_token\":\"***",
 ];
 const LIMIT_MS = 500;
 for (const unit of ADVERSARIAL) {
@@ -124,6 +128,29 @@ test("a value shared by two parents without a cycle is not circular", () => {
 test("exponential shared-reference graphs are bounded by MAX_NODES", () => {
   const r = { ...baseline(), apple: chain(40, (v) => ({ l: v, r: v })) };
   rejectsWith(r, "more than " + MAX_NODES + " values");
+});
+// independent count of every value (the record, each object and array, each primitive), for the MAX_NODES boundary
+const countValues = (v) => 1 + (v !== null && typeof v === "object" ? (Array.isArray(v) ? v : Object.values(v)).reduce((n, x) => n + countValues(x), 0) : 0);
+test("primitives count toward MAX_NODES: an array of 1,000,001 zeros is rejected", () => {
+  rejectsWith({ ...baseline(), apple: new Array(1000001).fill(0) }, "more than " + MAX_NODES + " values");
+});
+test("primitives count toward MAX_NODES: many primitive keys in one object are rejected", () => {
+  const big = {}; for (let i = 0; i <= MAX_NODES; i++) big["k" + i] = 0;
+  rejectsWith({ ...baseline(), apple: big }, "more than " + MAX_NODES + " values");
+});
+test("exactly MAX_NODES values passes; one more is rejected", () => {
+  const n0 = countValues(baseline()); // the apple array itself adds one more value
+  assert.equal(evaluate({ ...baseline(), apple: new Array(MAX_NODES - n0 - 1).fill(0) }).verdict, "pass");
+  rejectsWith({ ...baseline(), apple: new Array(MAX_NODES - n0).fill(0) }, "more than " + MAX_NODES + " values");
+  const obj = (n) => { const o = {}; for (let i = 0; i < n; i++) o["k" + i] = 0; return o; };
+  assert.equal(evaluate({ ...baseline(), apple: obj(MAX_NODES - n0 - 1) }).verdict, "pass");
+  rejectsWith({ ...baseline(), apple: obj(MAX_NODES - n0) }, "more than " + MAX_NODES + " values");
+});
+test("an oversized array is rejected when it is the last container visited", () => {
+  // { apple: [...] } alone: the record, apple and the array's elements are all the values there are
+  const tooMany = (got) => got.errors.some((e) => e.includes("more than " + MAX_NODES + " values"));
+  assert.equal(tooMany(evaluate({ apple: new Array(MAX_NODES - 2).fill(0) })), false);
+  rejectsWith({ apple: new Array(MAX_NODES - 1).fill(0) }, "more than " + MAX_NODES + " values");
 });
 test("a record that cannot be serialised is rejected, not thrown", () => {
   rejectsWith({ ...baseline(), apple: { big: 1n } }, "cannot be serialised");
