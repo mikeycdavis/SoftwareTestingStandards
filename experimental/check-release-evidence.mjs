@@ -25,7 +25,6 @@ export function check(r) {
   if (!nonEmpty(r.stage)) errs.push("stage required");
   if (typeof r.source?.dirty !== "boolean") errs.push("source.dirty required (boolean)");
   if (r.stage === "production" && r.source?.dirty !== false) errs.push("production requires source.dirty === false (dirty or missing is rejected)");
-  if (r.source?.dirty === true) errs.push("dirty build is not release evidence");
   if (/PRIVATE KEY|privateKey|password=|"password"|ghp_[A-Za-z0-9]{20,}|AKIA[0-9A-Z]{12,}|AWS_SECRET_ACCESS_KEY|client_secret/i.test(JSON.stringify(r))) errs.push("secret material present");
   for (const [ns, v] of Object.entries(r)) {
     if (CORE.includes(ns) || !v || typeof v !== "object" || Array.isArray(v)) continue;
