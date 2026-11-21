@@ -1,8 +1,8 @@
 // EXPERIMENTAL: draft checker used only to exercise rejection fixtures. Not the schema; not frozen (C1).
 // Scope: ONLY the checks below are enforced: artifact.digest, tests (non-empty; per-test evidenceKind and digest binding for ALL kinds;
 // command and exitCode for automated tests only), signing.status, stage (enum), source.dirty, a pattern-based secret scan, and protection of core
-// groups from top-level profile redefinition (nested redefinition is NOT detected). approvals, residualRisk, rollback, provenance and distribution are NOT required or
-// validated here. This checker has no "not-evaluated" outcome: every absent or invalid checked field is rejected, so it
+// groups from top-level profile redefinition (nested redefinition is NOT detected). approvals, residualRisk, residualRisks, testRuns, rollback, provenance and distribution are NOT required or
+// validated here (residualRisks and testRuns are in CORE only to block profile redefinition). This checker has no "not-evaluated" outcome: every absent or invalid checked field is rejected, so it
 // shows only that absence never passes, not how a real validator would report not-evaluated.
 const has = (o, k) => o != null && typeof o === "object" && Object.prototype.hasOwnProperty.call(o, k);
 const CORE = ["source", "artifact", "tests", "signing", "stage", "approvals", "residualRisk", "rollback", "provenance", "distribution", "residualRisks", "testRuns"];
