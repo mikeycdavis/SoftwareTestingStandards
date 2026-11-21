@@ -1,4 +1,4 @@
-<!-- Charter revision 3; authoritative evidence: F:GitHub EvidenceSoftwareTestingStandardsevidence-1 -->
+<!-- Charter revision 3; authoritative evidence: F:\GitHub Evidence\SoftwareTestingStandards\evidence-1\ -->
 # Charter packet 01 — SoftwareTestingStandards
 
 Status: DRAFT, read-only. Backlog IDs are draft labels, not issue numbers. See
@@ -45,6 +45,8 @@ and recorded so that a green result means what a reader thinks it means.
 - Not a QA-staffing, certification, or process-maturity (TMMi) framework.
 
 ## 4. Authoritative first-party sources (all UNVERIFIED until opened — see conventions §3.7)
+
+> Status note: this section is the pre-verification charter text. The source ledger in the evidence folder (hashed in `docs/evidence-index.md`) records which sources were later opened (tool-extracted, not human-reviewed) and governs; "unverified" below is superseded per source by the ledger.
 
 | Source | Role |
 | --- | --- |
