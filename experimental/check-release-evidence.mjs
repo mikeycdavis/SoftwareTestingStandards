@@ -17,7 +17,9 @@
 //     ingested | failed); stage (internal | test | staged | production); source.dirty (boolean, required at every stage).
 //   - stage "production" additionally requires source.dirty === false (a dirty source is valid below production).
 //   - test.manual is optional; when present it must be a boolean (manual: "false", 1, null are rejected as an invalid
-//     type). A test with manual === true labelled evidenceKind "automated" is rejected; a manual test carrying command or
+//     type), checked even when evidenceKind is absent or invalid. command and exitCode are judged only once evidenceKind
+//     is known, because what is valid depends on the branch. A test with manual === true labelled evidenceKind
+//     "automated" is rejected; a manual test carrying command or
 //     exitCode (in any form) is rejected, because the manual branch carries neither.
 //   - a pattern-based secret scan over the serialised record (SECRET_PATTERNS below; scanSecrets is exported). DEFENCE IN
 //     DEPTH ONLY: the patterns are a known, incomplete list; a non-detection does not prove that no secret is present.
@@ -34,8 +36,17 @@
 //         pwd=$(pwd); the key-name rule counts pwd only inside a longer key (dbPwd, db_pwd), not "pwd" or "OLDPWD";
 //       - secret-named JSON keys that are metadata are not flagged: a key ending in ref, name, type, endpoint, scan, scans,
 //         scanned, scanner(s) or scanning (passwordSecretRef, secretName, tokenType, token_endpoint, secretScan,
-//         secret_scanning), and token inside
-//         tokenize/tokenizer does not count. A real secret under such a key is missed;
+//         secret_scanning), and token inside tokenize/tokenizer does not count. A real secret under such a key is missed;
+//       - secret-key-name inspects string values (and secret-key-number 6+ digit numbers) only, not array or object
+//         values; keys longer than 128 characters or containing an escape are missed. Other secret-word keys holding a
+//         string are flagged even when they are metadata (tokensUsed, tokenUrl, secretVersion, secretsManagerArn,
+//         passwordMinLength, passwordResetTested): known false positives;
+//       - a CLI or mysql value may open with up to 4 quotes ('', "", '"...) and is still checked; a CLI value starting
+//         with one dash is checked when 2+ value characters follow (--api-key -Hunter2), so --password -v and a following
+//         --flag are not flagged, while a short option of 2+ letters after a secret flag is (a known false positive);
+//         mysql -p-x is checked. BuildKit's safe form --secret id=... (docker build --secret id=npmrc,src=.npmrc) is not
+//         flagged;
+//       - mysql intervening arguments may be quoted (mysql -u "root" -phunter2 is flagged), up to 200 characters;
 //       - url-credentials needs scheme://user:password@host where host is a hostname with optional :port followed by
 //         /, ?, #, whitespace or the end; image refs such as docker://alpine:3.19@sha256:... are not flagged;
 //       - pure REFERENCES and MASKS are accepted as non-secrets in CLI flag values, mysql -p values, secret-named JSON
@@ -78,7 +89,9 @@ const GHA = R`\$\{\{ ?[A-Za-z_][A-Za-z0-9_-]{0,63}(?:\.[A-Za-z_][A-Za-z0-9_-]{0,
 // a pure reference: ${{ ... }} | ${NAME} | $NAME | %NAME%
 const REF = "(?:" + GHA + R`|\$\{` + ID + R`\}|\$` + ID + "|%" + ID + "%)";
 // a masked value: *** (3 to 64 stars), <redacted>, [redacted] (any case)
-const MASK = R`(?:\*{3,64}|<redacted>|\[redacted\])`;
+// spelled out case-insensitively so that the case-sensitive mysql pattern matches <REDACTED> too
+const anyCase = (w) => w.replace(/[a-z]/g, (c) => "[" + c + c.toUpperCase() + "]");
+const MASK = R`(?:\*{3,64}|<` + anyCase("redacted") + R`>|\[` + anyCase("redacted") + R`\])`;
 // not a secret: a pure reference or a mask
 const NS = "(?:" + REF + "|" + MASK + ")";
 // a whole shell value that is not a secret: bare, 'single quoted' or "double quoted" (serialised as \"...\"); the
@@ -95,20 +108,22 @@ export const SECRET_PATTERNS = [
   ["password-assign", /password=/i],
   ["password-key", /"password"/i],
   // pass= / passwd=, except a test summary (12, 12/12, 100%, all; then an END_ASSIGN or ",") or a whole non-secret value
-  ["pass-assign", rx(R`(?<![A-Za-z0-9])pass(?:wd)?=(?!(?:[0-9]{1,32}(?:\/[0-9]{1,32}|%)?|all)(?=[;&,\s]|\\[tnr]|"|$)|` + WHOLE + END_ASSIGN + R`)(?:'|\\")?[^;"\s&\\]`, "i")],
+  ["pass-assign", rx(R`(?<![A-Za-z0-9])pass(?:wd)?=(?!(?:[0-9]{1,32}(?:\/[0-9]{1,32}|%)?|all)(?=[;&,\s]|\\[tnr]|"|$)|` + WHOLE + END_ASSIGN + R`)(?:'|\\"){0,4}[^;"\s&\\]`, "i")],
   // pwd=, except a path (/..., ~..., C:\..., . or ..), $(pwd), or a whole non-secret value
-  ["pwd-assign", rx(R`(?<![A-Za-z0-9])pwd=(?![\/~]|[A-Za-z]:(?:\\\\|\/)|\.{1,2}(?=[\/;&\s]|\\|"|$)|\$\(pwd\)|` + WHOLE + END_ASSIGN + R`)(?:'|\\")?[^;"\s&\\]`, "i")],
+  ["pwd-assign", rx(R`(?<![A-Za-z0-9])pwd=(?![\/~]|[A-Za-z]:(?:\\\\|\/)|\.{1,2}(?=[\/;&\s]|\\|"|$)|\$\(pwd\)|` + WHOLE + END_ASSIGN + R`)(?:'|\\"){0,4}[^;"\s&\\]`, "i")],
   ["github-ghp", /(?<![A-Za-z0-9_])ghp_[A-Za-z0-9]{20,255}/],
   ["github-pat", /(?<![A-Za-z0-9_])github_pat_[A-Za-z0-9_]{20,255}/],
   ["github-gho", /(?<![A-Za-z0-9_])gho_[A-Za-z0-9]{20,255}/],
   ["github-ghs", /(?<![A-Za-z0-9_])ghs_[A-Za-z0-9]{20,255}/],
   ["github-ghu", /(?<![A-Za-z0-9_])ghu_[A-Za-z0-9]{20,255}/],
   ["github-ghr", /(?<![A-Za-z0-9_])ghr_[A-Za-z0-9]{20,255}/],
+
   ["aws-akia", /(?<![A-Z0-9])AKIA[0-9A-Z]{16}(?![0-9A-Z])/],
   ["aws-asia", /(?<![A-Z0-9])ASIA[0-9A-Z]{16}(?![0-9A-Z])/],
   ["aws-secret-env", /aws_secret_access_key/i],
   ["client-secret", /client_secret/i],
-  // a JSON key whose name contains a secret word, holding a non-empty string that is not wholly a reference or a mask.
+  // a JSON key whose name contains a secret word, whose value is a string that is non-empty and not wholly a reference
+  // or a mask (array and object values are not inspected).
   // pwd counts only inside a longer name (dbPwd, db_pwd; not pwd itself or OLDPWD, which pwd-key handles); token does
   // not count inside tokenize/tokenizer; metadata keys ending in ref, name, type, endpoint or scan(s/ned/ner/ners/ning)
 // are not flagged.
@@ -118,9 +133,9 @@ export const SECRET_PATTERNS = [
   // the JSON key "pwd" holding a non-empty string that is not a path or wholly a reference or a mask
   ["pwd-key", rx(R`"pwd"\s{0,8}:\s{0,8}"(?![\/~]|[A-Za-z]:(?:\\\\|\/)|` + NS + R`")[^"]`, "i")],
   // a CLI flag naming a secret, then = or spaces/tabs, then a value that is not a WHOLE non-secret value followed by END
-  ["cli-secret-arg", rx(R`(?<![A-Za-z0-9_-])--?(?:password|passwd|pass|passphrase|token|secret|api[-_]?key|client[-_]secret|access[-_]token|auth[-_]token)(?:=|(?:\s|\\t){1,8})(?!` + WHOLE + END + R`)(?:'|\\")?[^\s"'\\-]`, "i")],
+  ["cli-secret-arg", rx(R`(?<![A-Za-z0-9_-])--?(?:password|passwd|pass|passphrase|token|secret(?!(?:=|(?:\s|\\t){1,8})id=)|api[-_]?key|client[-_]secret|access[-_]token|auth[-_]token)(?:=|(?:\s|\\t){1,8})(?!` + WHOLE + END + R`)(?:'|\\"){0,4}(?:-(?=[^\s"'\\-]{2}))?[^\s"'\\-]`, "i")],
   // mysql client -p<password> (first or later argument, optionally quoted); bare -p (prompt) and -P<port> do not match
-  ["mysql-inline-password", rx(R`(?<![A-Za-z0-9_])mysql[a-z]{0,12}(?:\s[^"]{0,200}?)?\s-p(?!` + WHOLE + END + R`)(?:'|\\")?[^\s"'\\-]`)],
+  ["mysql-inline-password", rx(R`(?<![A-Za-z0-9_])mysql[a-z]{0,12}(?:\s(?:[^"\\]|\\.){0,200}?)?\s-p(?!` + WHOLE + END + R`)(?:'|\\"){0,4}-?[^\s"'\\-]`)],
   ["url-credentials", /(?<![A-Za-z0-9+.-])[A-Za-z][A-Za-z0-9+.-]{0,31}:\/\/[^\s\/:@"\\]{1,128}:[^\s\/@"\\]{1,128}@[A-Za-z0-9.-]{1,253}(?::\d{1,5})?(?=[\/?#\s'"\\]|$)/],
   ["slack-token", /(?<![A-Za-z0-9])xox[abposr]-[A-Za-z0-9-]{10,255}/],
   ["npm-token", /(?<![A-Za-z0-9_])npm_[A-Za-z0-9]{36}(?![A-Za-z0-9])/],
@@ -220,11 +235,14 @@ export function evaluate(r) {
     if (!has(t, "artifactDigest")) absent("test artifactDigest required (missing binding)");
     else if (!nonEmpty(t.artifactDigest)) errors.push("test artifactDigest required (missing binding: not a non-empty string)");
     else if (artifactDigest !== undefined && t.artifactDigest !== artifactDigest) errors.push("test bound to a different digest");
+    // manual is optional; when present it must be a boolean, checked before any early return below. command and
+    // exitCode depend on the branch, so they are judged only once evidenceKind is known.
+    const manualInvalid = has(t, "manual") && typeof t.manual !== "boolean";
+    if (manualInvalid) errors.push("test manual must be a boolean (invalid type)");
     if (!has(t, "evidenceKind")) { absent("test evidenceKind required: automated or manual"); return; }
     if (!KINDS.includes(t.evidenceKind)) { errors.push("test evidenceKind required: automated or manual (invalid value)"); return; }
-    // manual is optional; when present it must be a boolean, and only manual === true marks manual evidence
-    if (has(t, "manual") && typeof t.manual !== "boolean") errors.push("test manual must be a boolean (invalid type)");
-    else if (t.manual === true && t.evidenceKind === "automated") errors.push("manual evidence labelled automated");
+    // only manual === true marks manual evidence
+    if (t.manual === true && t.evidenceKind === "automated") errors.push("manual evidence labelled automated");
     if (t.evidenceKind === "automated") {
       if (!has(t, "command")) absent("automated evidence needs command (non-empty string)");
       else if (!nonEmpty(t.command)) errors.push("automated evidence needs command (non-empty string)");
