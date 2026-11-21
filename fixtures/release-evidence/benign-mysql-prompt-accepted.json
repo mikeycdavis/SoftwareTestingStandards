@@ -1,0 +1,1 @@
+{"verdict":"pass","case":"benign-mysql-prompt-accepted","schemaVersion":"0.0.0-draft","artifact":{"id":"app","digest":"sha256:aaaa"},"source":{"revision":"abc123","dirty":false},"tests":[{"evidenceKind":"automated","artifactDigest":"sha256:aaaa","command":"mysql -u root -p -h db -P3306 -e select","exitCode":0}],"signing":{"status":"not-evaluated"},"stage":"internal"}

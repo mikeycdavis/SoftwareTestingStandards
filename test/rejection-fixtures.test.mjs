@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readdirSync, readFileSync } from "node:fs";
-import { check, evaluate } from "../experimental/check-release-evidence.mjs";
+import { check, evaluate, scanSecrets } from "../experimental/check-release-evidence.mjs";
 const dir = new URL("../fixtures/release-evidence/", import.meta.url);
 const VERDICTS = ["pass", "reject", "not-evaluated"];
 // Fixture metadata (verdict, reason, case) is stripped before evaluation so it cannot trip or mask a check.
@@ -22,14 +22,20 @@ for (const f of readdirSync(dir).filter((x) => x.endsWith(".json"))) {
       assert.deepEqual(errs, []);
       return;
     }
-    assert.ok(typeof r.reason === "string" && r.reason !== "", "non-pass fixture needs a reason");
+    // reason: one substring, or a list of substrings that must all be found
+    const reasons = Array.isArray(r.reason) ? r.reason : [r.reason];
+    assert.ok(reasons.length > 0 && reasons.every((x) => typeof x === "string" && x !== ""), "non-pass fixture needs a reason");
     assert.ok(errs.length > 0, "check() must never return an empty list unless the verdict is pass");
     if (r.verdict === "reject") {
-      assert.ok(got.errors.some((e) => e.includes(r.reason)), "expected rejection for: " + r.reason + " got " + JSON.stringify(got));
+      for (const reason of reasons) assert.ok(got.errors.some((e) => e.includes(reason)), "expected rejection for: " + reason + " got " + JSON.stringify(got));
     } else {
       assert.deepEqual(got.errors, [], "not-evaluated means no present-but-invalid value");
-      assert.ok(got.notEvaluated.some((e) => e.includes(r.reason)), "expected not-evaluated for: " + r.reason + " got " + JSON.stringify(got));
-      assert.ok(errs.some((e) => e.startsWith("not-evaluated:") && e.includes(r.reason)));
+      for (const reason of reasons) {
+        assert.ok(got.notEvaluated.some((e) => e.includes(reason)), "expected not-evaluated for: " + reason + " got " + JSON.stringify(got));
+        assert.ok(errs.some((e) => e.startsWith("not-evaluated:") && e.includes(reason)));
+      }
+      // isolation: a not-evaluated fixture is absent only in what its reason names
+      for (const e of got.notEvaluated) assert.ok(reasons.some((reason) => e.includes(reason)), "unexpected not-evaluated item: " + e);
     }
   });
 }
@@ -55,3 +61,27 @@ test("empty production record rejects every absent required field", () => {
   assert.deepEqual(got.notEvaluated, []);
   for (const s of ["signing.status", "artifact.digest", "tests required", "source.dirty required", "production requires"]) assert.ok(got.errors.some((e) => e.includes(s)), s);
 });
+
+// ReDoS guard: every secret pattern must stay fast on large adversarial input. The bound is deliberately generous.
+const SIZE = 200 * 1024;
+const fill = (unit) => unit.repeat(Math.ceil(SIZE / unit.length)).slice(0, SIZE);
+const ADVERSARIAL = [
+  "eyJ", "eyJa", "eyJaaaaaaaaaaa.", "password", "\"password", "\"password\":", "\"a", "\"a\":", "a", " ", "-", "=",
+  "AKIA", "ASIA", "ghp_", "github_pat_", "gho_", "Bearer ", "Bearer a", "Bearer 1", "--password ", "--password -", "-p",
+  "mysql ", "mysql -", "a://", "a://a:", "a://a:a", "xoxb-", "npm_", "AIza", "sk-proj-", "sk_live_", "pass=", "pwd=",
+  "AccountKey=", "SharedAccessSignature=", "?sig=", "&", "PRIVATE ", "client_", "aws_secret_",
+];
+const LIMIT_MS = 500;
+for (const unit of ADVERSARIAL) {
+  test("secret scan is linear on 200KB of " + JSON.stringify(unit), () => {
+    const s = fill(unit);
+    let t0 = performance.now();
+    scanSecrets(s);
+    const raw = performance.now() - t0;
+    assert.ok(raw < LIMIT_MS, "raw scan took " + raw.toFixed(0) + "ms");
+    t0 = performance.now();
+    evaluate({ notes: s });
+    const rec = performance.now() - t0;
+    assert.ok(rec < LIMIT_MS, "record scan took " + rec.toFixed(0) + "ms");
+  });
+}
