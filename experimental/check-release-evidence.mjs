@@ -47,6 +47,9 @@
 //         mysql -p-x is checked. BuildKit's safe form --secret id=... (docker build --secret id=npmrc,src=.npmrc) is not
 //         flagged;
 //       - mysql intervening arguments may be quoted (mysql -u "root" -phunter2 is flagged), up to 200 characters;
+//       - not detected (known gaps): inline environment assignments with secret-named variables other than the listed
+//         spellings (API_KEY=..., GITHUB_TOKEN=... npm test, export SECRET_KEY=...); short password options of tools other
+//         than mysql (docker login -p, sshpass -p, sqlcmd -P, curl -u user:pw); Basic-auth headers (Authorization: Basic ...).
 //       - url-credentials needs scheme://user:password@host where host is a hostname with optional :port followed by
 //         /, ?, #, whitespace or the end; image refs such as docker://alpine:3.19@sha256:... are not flagged;
 //       - pure REFERENCES and MASKS are accepted as non-secrets in CLI flag values, mysql -p values, secret-named JSON
