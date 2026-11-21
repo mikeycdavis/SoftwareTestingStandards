@@ -1,0 +1,1 @@
+{"verdict":"reject","case":"binding-not-string","schemaVersion":"0.0.0-draft","artifact":{"id":"app","digest":"sha256:aaaa"},"source":{"revision":"abc123","dirty":false},"tests":[{"evidenceKind":"automated","artifactDigest":7,"command":"npm test","exitCode":0}],"signing":{"status":"not-evaluated"},"stage":"internal","reason":"missing binding: not a non-empty string"}

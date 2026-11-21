@@ -1,0 +1,1 @@
+{"verdict":"reject","case":"test-entry-not-object","schemaVersion":"0.0.0-draft","artifact":{"id":"app","digest":"sha256:aaaa"},"source":{"revision":"abc123","dirty":false},"tests":["npm test"],"signing":{"status":"not-evaluated"},"stage":"internal","reason":"tests[0] must be an object"}
