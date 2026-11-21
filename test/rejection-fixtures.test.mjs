@@ -11,3 +11,7 @@ for (const f of readdirSync(dir).filter((x) => x.endsWith(".json"))) {
     else assert.ok(errs.some((e) => e.includes(r.reason)), "expected rejection for: " + r.reason + " got " + JSON.stringify(errs));
   });
 }
+
+test("non-object records are rejected", () => {
+  for (const bad of [null, [], "x", 1]) assert.deepEqual(check(bad), ["record must be an object"]);
+});
