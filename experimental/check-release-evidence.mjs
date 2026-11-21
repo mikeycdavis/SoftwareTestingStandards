@@ -25,7 +25,7 @@ export function check(r) {
     if (t.evidenceKind === "automated") {
       if (!nonEmpty(t.artifactDigest)) errs.push("test artifactDigest required (missing binding)");
       else if (t.artifactDigest !== artifactDigest) errs.push("test bound to a different digest");
-      if (!t.command) errs.push("automated evidence needs command");
+      if (typeof t.command !== "string" || t.command.trim() === "") errs.push("automated evidence needs command (non-empty string)");
       if (t.exitCode !== 0) errs.push("automated evidence needs exitCode 0 (failing or missing exit code is not a pass)");
     }
   }
