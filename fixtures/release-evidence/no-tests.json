@@ -1,1 +1,1 @@
-{"expect":"reject","case":"no-tests","schemaVersion":"0.0.0-draft","artifact":{"id":"app","digest":"sha256:aaaa"},"source":{"revision":"abc123","dirty":false},"signing":{"status":"not-evaluated"},"stage":"internal","reason":"tests required"}
+{"verdict":"not-evaluated","case":"no-tests","schemaVersion":"0.0.0-draft","artifact":{"id":"app","digest":"sha256:aaaa"},"source":{"revision":"abc123","dirty":false},"signing":{"status":"not-evaluated"},"stage":"internal","reason":"tests required"}

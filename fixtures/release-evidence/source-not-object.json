@@ -1,0 +1,1 @@
+{"verdict":"reject","case":"source-not-object","schemaVersion":"0.0.0-draft","artifact":{"id":"app","digest":"sha256:aaaa"},"source":"clean","tests":[{"evidenceKind":"automated","artifactDigest":"sha256:aaaa","command":"npm test","exitCode":0}],"signing":{"status":"not-evaluated"},"stage":"internal","reason":"source must be an object"}
