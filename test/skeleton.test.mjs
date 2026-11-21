@@ -12,7 +12,8 @@ test("candidate rule-ID domains fit the portfolio grammar", () => {
 });
 
 test("no candidate domain shadows an EngineeringStandards domain", () => {
-  for (const d of domains) assert.notEqual(d, "testing");
+  const reserved = ["ai", "architecture", "audit", "concurrency", "data", "documentation", "errors", "meta", "observability", "planning", "quality", "reconstruction", "scm", "security", "testing", "verification"]; // dated snapshot (2026-11-20) of EngineeringStandards rules/*.json domains; hard-coded, not read live
+  for (const d of domains) assert.ok(!reserved.includes(d));
 });
 
 test("package declares zero dependencies and Node >=18", () => {
