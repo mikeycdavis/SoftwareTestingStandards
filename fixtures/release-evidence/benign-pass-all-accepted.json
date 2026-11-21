@@ -1,0 +1,1 @@
+{"verdict":"pass","case":"benign-pass-all-accepted","schemaVersion":"0.0.0-draft","artifact":{"id":"app","digest":"sha256:aaaa"},"source":{"revision":"abc123","dirty":false},"tests":[{"evidenceKind":"automated","artifactDigest":"sha256:aaaa","command":"npm test # pass=all","exitCode":0}],"signing":{"status":"not-evaluated"},"stage":"internal"}

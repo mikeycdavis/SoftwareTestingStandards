@@ -1,0 +1,1 @@
+{"verdict":"pass","case":"benign-pwd-windows-path-accepted","schemaVersion":"0.0.0-draft","artifact":{"id":"app","digest":"sha256:aaaa"},"source":{"revision":"abc123","dirty":false},"tests":[{"evidenceKind":"automated","artifactDigest":"sha256:aaaa","command":"set # PWD=C:\\actions\\work","exitCode":0}],"signing":{"status":"not-evaluated"},"stage":"internal"}
