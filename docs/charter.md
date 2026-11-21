@@ -64,7 +64,7 @@ only as non-normative provenance.
 
 ## 5. Proposed hierarchy
 
-Repository layout per conventions §2. Proposed standards (target ~30, mirroring UIUX's 40 / Eng's 53
+Repository layout per conventions §2. Proposed standards (26 proposed rows; decision packet S23 estimates ~24, mirroring UIUX's 40 / Eng's 53
 scale but smaller — the pack is process-heavy):
 
 | # | Standard | Group |
