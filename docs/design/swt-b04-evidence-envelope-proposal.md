@@ -10,7 +10,7 @@ Status: **PROPOSAL, not frozen.** Fields, names, versioning and acceptance crite
 | `run.command`, `run.exitCode`, `run.startedAt`, `run.finishedAt` | What was run and when | Stale/copied results (T2); AI "tests pass" claims without a run (T9) |
 | `environment.declared`, `environment.differencesFromProduction[]` | Fidelity statement | Environment drift (T11) |
 | `result.summary`, `result.skipped[]`, `result.retries[]`, `result.quarantined[]` | Disclosed instability and scope reduction | Flaky retry-to-green (T4), silent skips (T6) |
-| `evidence.kind` = `automated | manual` | Never upgraded into each other | Manual presented as automated |
+| `evidence.kind` = `automated` or `manual` | Never upgraded into each other | Manual presented as automated |
 | `retention.location`, `retention.hash` | Where the artifact lives | Unverifiable evidence |
 
 Surfaces: static, ingested, attested. A field absent from the evidence yields `not-evaluated`, never pass.
@@ -26,3 +26,9 @@ Proposed requirement (not yet enforced; no guard exists in this repository): evi
 
 ## 4. Open items for the owner
 Exact field names and types; whether `dirty` blocks release evidence; retention minimums. None decided here.
+
+## Open points recorded after independent review (nothing here is frozen)
+
+- **Charter tension.** Charter Standard 02 says manual and automated evidence "use separate schemas". This proposal uses one envelope with a discriminating `evidence.kind`. The two may be reconciled by per-kind schema branches inside one envelope, or the charter wording may change. This is an open owner question, not a decision.
+- **Field names.** This table uses `build.artifactDigest`, `build.sourceRevision` and `build.dirty`. The experimental fixtures on the rejection-fixtures branch use `artifact.digest`, `source.dirty` and `tests[].evidenceKind`. The fixture round must be aligned to this table, or this table amended, before the core is frozen.
+- **Checker.** The experimental checker on the fixtures branch adds a pattern guard for secrets; it is not an enforced property of any schema.
