@@ -1,0 +1,1 @@
+{"expect":"reject","case":"manual-missing-binding","schemaVersion":"0.0.0-draft","artifact":{"id":"app","digest":"sha256:aaaa"},"source":{"revision":"abc123","dirty":false},"tests":[{"evidenceKind":"manual"}],"signing":{"status":"not-evaluated"},"stage":"internal","reason":"missing binding"}
