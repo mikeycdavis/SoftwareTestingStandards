@@ -2,7 +2,7 @@
 # Charter packet 01 — SoftwareTestingStandards
 
 Status: DRAFT, read-only. Backlog IDs are draft labels, not issue numbers. See
-`00-shared-conventions.md` (kept in the evidence folder above, not in this repository).
+`00-shared-conventions.md` (kept in `F:\GitHub Evidence\SoftwareTestingStandards\evidence-1\`, not in this repository).
 
 ## 1. Purpose (charter sentence)
 
