@@ -177,18 +177,17 @@ const field = (g, key) => (g === ABSENT || !has(g, key) ? ABSENT : g[key]);
 
 export const MAX_DEPTH = 256;
 export const MAX_NODES = 1000000;
-// Iterative walk (no recursion, so no stack overflow): returns an error string for a record that is too deep, too large
-// or circular, else null. A value shared by two parents without a cycle is not circular. Every value counts toward
-// MAX_NODES (the record itself, each object and array, and each primitive), counting a value each time it is reached.
-// The count is checked before a child is scheduled, so the walk's own allocation is bounded by MAX_NODES.
+// Limits for the snapshot walk below (which is iterative, so no recursion and no stack overflow). A value shared by two
+// parents without a cycle is not circular. Every value counts toward MAX_NODES (the record itself, each object and array
+// and each primitive), counting a value each time it is reached. The count is checked before a child is scheduled.
 const NOT_JSON = "record contains a value that is not JSON (undefined, function or symbol)";
 const NOT_PLAIN = "record must be plain JSON data (no accessors, proxies, custom toJSON or class instances)";
 const TOO_MANY = "record has more than " + MAX_NODES + " values";
 // Builds the one JSON snapshot that the whole evaluation and the secret scan use. Returns { error } or { value }. It reads
 // only property descriptors, so no getter, setter, proxy trap, valueOf or toJSON can run, and it copies into plain
 // null-prototype objects (and ordinary arrays), so no toJSON of the caller's can run later. A globally polluted Object.prototype or Array.prototype (a toJSON added to a built-in prototype) is out of scope: it is not something a record can do.
-// A record must be plain JSON data: accessors, proxies, an own toJSON of any kind, class instances, array subclasses and
-// extra non-index array properties are rejected, and so are undefined, function and symbol values (JSON.stringify would
+// A record must be plain JSON data: accessors, proxies, an own toJSON of any kind, non-plain prototypes (class instances, array subclasses, objects from another realm) and
+// extra non-index array properties and non-enumerable own properties are rejected, symbol-keyed properties are ignored (as in JSON), and so are undefined, function and symbol values (JSON.stringify would
 // silently drop them and turn an invalid present value into an absent one). A hole in an array becomes null, as in JSON.
 function snapshotOf(r) {
   const root = { v: r, d: 1, set: (x) => { root.out = x; } };
@@ -233,7 +232,7 @@ function snapshotOf(r) {
       for (const k of names) {
         const d = Object.getOwnPropertyDescriptor(v, k);
         if (d.get || d.set) return { error: NOT_PLAIN };
-        if (!d.enumerable) continue;
+        if (!d.enumerable) return { error: NOT_PLAIN }; // JSON would drop it, turning a present invalid value into an absent one
         if (++nodes > MAX_NODES) return { error: TOO_MANY };
         stack.push({ v: d.value, d: f.d + 1, set: (x) => { Object.defineProperty(out, k, { value: x, enumerable: true, writable: true, configurable: true }); } });
       }

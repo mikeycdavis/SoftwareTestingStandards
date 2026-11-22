@@ -198,6 +198,14 @@ test("records are plain JSON data judged as one snapshot: accessors, proxies, to
     assert.ok(got.errors.some((e) => e.includes("not JSON")), JSON.stringify(got));
     assert.equal(evaluate({ ...prod, stage: "internal", signing: { status: "attested", notApplicable: bad } }).verdict, "reject");
   }
+  // non-enumerable own properties would be dropped by JSON and turn invalid values into absent ones: reject them
+  const hide = (o, k, v) => Object.defineProperty(o, k, { value: v, enumerable: false, writable: true, configurable: true });
+  const ne1 = { ...prod, testRuns: [{ ...prod.testRuns[0] }] }; hide(ne1.testRuns[0], "manual", "yes");
+  const ne2 = { ...prod, stage: "internal", signing: { status: "attested" } }; hide(ne2.signing, "notApplicable", "bogus");
+  const ne3 = { ...prod }; hide(ne3, "residualRisks", "x");
+  const ne4 = { ...prod, stage: "internal", signing: { } }; hide(ne4.signing, "status", "failed");
+  const ne5 = { ...prod, stage: "internal" }; hide(ne5, "tests", "");
+  for (const ne of [ne1, ne2, ne3, ne4, ne5]) rejectsPlain(ne);
   // a revoked proxy as the whole record does not throw
   const rev = Proxy.revocable({}, {}); rev.revoke();
   rejectsPlain(rev.proxy);
