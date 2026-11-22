@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "urn:standards:swt:release-evidence:core:0.1.0",
   "title": "SWT release-evidence core 0.1.0",
-  "description": "Frozen core structure 0.1.0 (initial freeze, not 1.0.0). Describes the shape of PRESENT values only. Absence below stage production is not a schema violation: the evaluator (evaluate() in experimental/check-release-evidence.mjs) yields the outcome not-evaluated for it and never pass. At stage production the required fields below apply. tests[] holds the required test identities; testRuns[] holds execution evidence, one envelope per run, bound to a test by testId. Frozen as part of the 0.1.0 contract but enforced by the evaluator, not expressible here: the mapping that every required test has at least one applicable run, unique test ids, testId references, and the rule that a declared signing.status not-evaluated is never a pass unless signing.notApplicable is declared. Not frozen as schema rules, evaluator-only: secret scanning, the digest-equality rule between artifact.digest and testRuns[].artifactDigest, record size and depth limits, and the profile-redefinition rule (evaluator only). Retention, approvals, rollback, provenance, distribution, the required fields of the manual branch, and the Standard 02 amendment stay open.",
+  "description": "Frozen core structure 0.1.0 (initial freeze, not 1.0.0). Describes the shape of PRESENT values only. Absence below stage production is not a schema violation: the evaluator (evaluate() in experimental/check-release-evidence.mjs) yields the outcome not-evaluated for it and never pass. At stage production the required fields below apply. tests[] holds the required test identities; testRuns[] holds execution evidence, one envelope per run, bound to a test by testId. Frozen as part of the 0.1.0 contract but enforced by the evaluator, not expressible here: the mapping that every required test has at least one applicable run, unique test ids, testId references, and the rule that a declared signing.status not-evaluated is never a pass unless signing.notApplicable is declared, and that a declared signing.status failed is always a rejection. Not frozen as schema rules, evaluator-only: secret scanning, the digest-equality rule between artifact.digest and testRuns[].artifactDigest, record size and depth limits, and the profile-redefinition rule (evaluator only). Retention, approvals, rollback, provenance, distribution, the required fields of the manual branch, and the Standard 02 amendment stay open.",
   "x-coreVersion": "0.1.0",
   "x-frozen": [
     "single envelope with per-kind branches (testRuns[] entries)",
@@ -11,6 +11,7 @@
     "source.dirty",
     "not-evaluated outcome and the production-required set",
     "signing.status not-evaluated is never a pass unless declared not applicable (evaluator)",
+    "signing.status failed is always a rejection (evaluator)",
     "residualRisks[]",
     "testRuns[]",
     "evaluate() result shape"
