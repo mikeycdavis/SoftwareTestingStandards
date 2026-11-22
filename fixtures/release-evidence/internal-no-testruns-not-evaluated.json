@@ -1,0 +1,1 @@
+{"verdict":"not-evaluated","reason":"has no applicable run","case":"internal-no-testruns-not-evaluated","schemaVersion":"0.0.0-draft","artifact":{"id":"app","digest":"sha256:aaaa"},"source":{"revision":"abc123","dirty":false},"tests":[{"id":"t0"}],"signing":{"status":"attested"},"stage":"internal"}

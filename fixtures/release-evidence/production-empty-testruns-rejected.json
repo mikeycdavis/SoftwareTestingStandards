@@ -1,0 +1,1 @@
+{"verdict":"reject","reason":"no applicable run","case":"production-empty-testruns-rejected","schemaVersion":"0.0.0-draft","artifact":{"id":"app","digest":"sha256:aaaa"},"source":{"revision":"abc123","dirty":false},"tests":[{"id":"t0"}],"testRuns":[],"signing":{"status":"attested"},"stage":"production"}

@@ -1,7 +1,9 @@
 // EXPERIMENTAL checker. The core structure it evaluates is frozen as release-evidence core 0.1.0 by
 // schemas/release-evidence.core.0.1.0.schema.json (see docs/design/swt-core-0.1.0-freeze.md for exactly what is frozen
-// and what stays open). The frozen parts are: the single envelope with per-kind branches, source.dirty, the
-// not-evaluated outcome, the plural residualRisks[] and testRuns[] names, and the shape of evaluate()'s result. Everything
+// and what stays open). The frozen parts are: the single envelope with per-kind branches (testRuns[] entries), tests[]
+// as required test identities, source.dirty, the not-evaluated outcome (including that a declared signing status
+// not-evaluated never passes unless signing.notApplicable is declared), the plural residualRisks[] and testRuns[]
+// names, and the shape of evaluate()'s result. Everything
 // else here, including the secret scan, is NOT frozen and may change.
 //
 // Outcomes: evaluate(record) returns { verdict: "pass" | "reject" | "not-evaluated", errors, notEvaluated }.
@@ -14,9 +16,13 @@
 //   yields an empty (passing) list.
 //
 // Validated here, and nothing else:
-//   - required fields: artifact.digest (non-empty string); tests (non-empty array of objects); per test, evidenceKind
-//     (automated | manual) and artifactDigest (non-empty string, equal to artifact.digest when that is valid); for
-//     automated tests only, command (non-empty string) and exitCode (must be 0); signing.status (not-evaluated | attested |
+//   - required fields: artifact.digest (non-empty string); tests (non-empty array of objects, each with a unique non-blank
+//     id: the required test identities); testRuns (execution evidence: every test needs at least one run with its id, an
+//     unmatched test is not-evaluated below production and rejected at production, and a run naming no test is rejected);
+//     per run, testId, evidenceKind (automated | manual) and artifactDigest (non-empty string, equal to artifact.digest
+//     when that is valid); for automated runs only, command (non-empty string) and exitCode (must be 0); signing.status
+//     (a declared not-evaluated never passes: the verdict is not-evaluated unless signing.notApplicable declares a non-blank
+//     basis and attestedBy; notApplicable is rejected when malformed or alongside any other status) (not-evaluated | attested |
 //     ingested | failed); stage (internal | test | staged | production); source.dirty (boolean, required at every stage).
 //   - stage "production" additionally requires source.dirty === false (a dirty source is valid below production).
 //   - test.manual is optional; when present it must be a boolean (manual: "false", 1, null are rejected as an invalid
@@ -224,6 +230,18 @@ export function evaluate(r) {
     const status = field(signing, "status");
     if (status === ABSENT) absent("signing.status required");
     else if (!SIGNING.includes(status)) errors.push("signing.status required and in enum (invalid value is rejected)");
+    // signing.notApplicable: { basis, attestedBy }, both non-blank strings. Valid only with status "not-evaluated". A
+    // declared status "not-evaluated" without it never passes: the verdict stays not-evaluated, at every stage.
+    const na = field(signing, "notApplicable");
+    if (na !== ABSENT) {
+      if (!isObj(na)) errors.push("signing.notApplicable must be an object with basis and attestedBy");
+      else {
+        if (!nonEmpty(na.basis)) errors.push("signing.notApplicable.basis required (non-empty string)");
+        if (!nonEmpty(na.attestedBy)) errors.push("signing.notApplicable.attestedBy required (non-empty string)");
+      }
+      if (status !== ABSENT && SIGNING.includes(status) && status !== "not-evaluated") errors.push("signing.notApplicable is only valid with status not-evaluated");
+    }
+    if (status === "not-evaluated" && na === ABSENT) notEvaluated.push("signing.status is not-evaluated and not declared not applicable (not a pass)");
   }
 
   const artifact = group(r, "artifact", errors);
@@ -235,10 +253,33 @@ export function evaluate(r) {
     else artifactDigest = d;
   }
 
+  // tests[] = the REQUIRED test identities: a non-empty array of objects, each with a unique non-blank string id.
+  // testRuns[] = EXECUTION EVIDENCE: each run is one envelope bound to a test by testId. Every valid required test must
+  // have at least one run with its id; an unmatched requirement can never pass (not-evaluated below production, rejected
+  // at production). The mapping is skipped for a testRuns that is present but not an array (the type error is reported).
+  const testIds = new Set();
+  let testsListed = false;
   if (!has(r, "tests")) absent("tests required and non-empty (no tests is not a pass)");
   else if (!Array.isArray(r.tests) || r.tests.length === 0) errors.push("tests required and non-empty (no tests is not a pass)");
-  else Array.from(r.tests).forEach((t, i) => { // Array.from turns holes into undefined, so a sparse array rejects
-    if (!isObj(t)) { errors.push("tests[" + i + "] must be an object"); return; }
+  else {
+    testsListed = true;
+    Array.from(r.tests).forEach((t, i) => { // Array.from turns holes into undefined, so a sparse array rejects
+      if (!isObj(t)) { errors.push("tests[" + i + "] must be an object"); return; }
+      if (!has(t, "id")) absent("tests[" + i + "].id required (test identity)");
+      else if (!nonEmpty(t.id)) errors.push("tests[" + i + "].id required (non-empty string)");
+      else if (testIds.has(t.id)) errors.push("duplicate test id: " + t.id);
+      else testIds.add(t.id);
+    });
+  }
+  const runCount = new Map();
+  if (has(r, "testRuns") && Array.isArray(r.testRuns)) Array.from(r.testRuns).forEach((t, i) => {
+    if (!isObj(t)) { errors.push("testRuns[" + i + "] must be an object"); return; }
+    if (!has(t, "testId")) absent("testRuns[" + i + "].testId required (binding to a test)");
+    else if (!nonEmpty(t.testId)) errors.push("testRuns[" + i + "].testId required (non-empty string)");
+    else if (testsListed) {
+      if (!testIds.has(t.testId)) errors.push("run references unknown test: " + t.testId);
+      else runCount.set(t.testId, (runCount.get(t.testId) || 0) + 1);
+    }
     if (!has(t, "artifactDigest")) absent("test artifactDigest required (missing binding)");
     else if (!nonEmpty(t.artifactDigest)) errors.push("test artifactDigest required (missing binding: not a non-empty string)");
     else if (artifactDigest !== undefined && t.artifactDigest !== artifactDigest) errors.push("test bound to a different digest");
@@ -261,6 +302,9 @@ export function evaluate(r) {
       if (has(t, "exitCode")) errors.push("manual evidence must not carry exitCode");
     }
   });
+  if (testsListed && !(has(r, "testRuns") && !Array.isArray(r.testRuns))) {
+    for (const id of testIds) if (!runCount.has(id)) absent("test " + id + " has no applicable run (an unmatched requirement cannot pass)");
+  }
 
   if (stage === ABSENT) absent("stage required and in enum: internal, test, staged, production");
   else if (!STAGES.includes(stage)) errors.push("stage required and in enum: internal, test, staged, production");
