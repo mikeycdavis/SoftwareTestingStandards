@@ -211,6 +211,13 @@ test("records are plain JSON data judged as one snapshot: accessors, proxies, to
   const ne7 = { ...prod, testRuns: [...prod.testRuns] }; hideIdx(ne7.testRuns, 0);
   const ne8 = { ...prod, residualRisks: [{ owner: "x" }] }; hideIdx(ne8.residualRisks, 0);
   for (const ne of [ne1, ne2, ne3, ne4, ne5, ne6, ne7, ne8]) rejectsPlain(ne);
+  // boxed primitives (even with a swapped prototype) carry a value JSON cannot represent as data: reject, never drop
+  rejectsPlain({ ...prod, notes: Object(5) });
+  rejectsPlain({ ...prod, notes: Object.setPrototypeOf(Object(1n), null) });
+  rejectsPlain({ ...prod, notes: Object.setPrototypeOf(new Number(5), Object.prototype) });
+  // the snapshot keeps record key order, so errors are reported in record order
+  const ordered = evaluate({ ...prod, x: { source: 1 }, y: { tests: 1 }, z: { stage: 1 } }).errors.filter((e) => e.startsWith("profile redefines"));
+  assert.deepEqual(ordered, ["profile redefines a core field: x.source", "profile redefines a core field: y.tests", "profile redefines a core field: z.stage"]);
   // a revoked proxy as the whole record does not throw
   const rev = Proxy.revocable({}, {}); rev.revoke();
   rejectsPlain(rev.proxy);

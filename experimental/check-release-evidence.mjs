@@ -77,7 +77,7 @@
 //     primitive counts, the record itself included, each time it is reached), containing a circular reference, or that
 //     cannot be serialised (for example a BigInt) is rejected before any other check; evaluate() does not throw for such
 //     records. Records that are not plain JSON data (accessor properties, proxies, a toJSON of any enumerability, class instances,
-//     array subclasses, objects from another realm, any own key named toJSON, extra array properties, non-enumerable own properties or indices, undefined, function or symbol values) are rejected by the same walk without invoking anything; the record is then evaluated and secret-scanned as one JSON snapshot.
+//     array subclasses, objects from another realm (except a null-prototype one, which is plain data), boxed primitives, module namespaces, any own key named toJSON, extra array properties, non-enumerable own properties or indices, undefined, function or symbol values) are rejected by the same walk without invoking anything; the record is then evaluated and secret-scanned as one JSON snapshot.
 //   - core group names (CORE) may not appear as a key at ANY depth (objects and arrays) inside any non-core top-level
 //     namespace (profile redefinition).
 // A top-level residualRisks or testRuns that is present must be an array (0.1.0). The content of residualRisks is not
@@ -201,7 +201,7 @@ function snapshotOf(r) {
     if (typeof v === "bigint") return { error: "record cannot be serialised" };
     if (v === undefined || typeof v === "function" || typeof v === "symbol") return { error: NOT_JSON };
     if (v === null || typeof v !== "object") { f.set(v); continue; }
-    if (types.isProxy(v)) return { error: NOT_PLAIN };
+    if (types.isProxy(v) || types.isBoxedPrimitive(v) || types.isModuleNamespaceObject(v)) return { error: NOT_PLAIN };
     if (onPath.has(v)) return { error: "record contains a circular reference" };
     if (f.d > MAX_DEPTH) return { error: "record nesting deeper than " + MAX_DEPTH + " levels" };
     onPath.add(v);
@@ -254,7 +254,8 @@ function coreKeysIn(v, path, out) {
 export function evaluate(input) {
   if (types.isProxy(input)) return { verdict: "reject", errors: [NOT_PLAIN], notEvaluated: [] };
   if (!isObj(input)) return { verdict: "reject", errors: ["record must be an object"], notEvaluated: [] };
-  const snap = snapshotOf(input);
+  let snap;
+  try { snap = snapshotOf(input); } catch { snap = { error: NOT_PLAIN }; } // defence in depth: evaluate() must not throw
   if (snap.error) return { verdict: "reject", errors: [snap.error], notEvaluated: [] };
   // r is the one snapshot: every check below and the secret scan read these values, never the caller's object again.
   const r = snap.value;
