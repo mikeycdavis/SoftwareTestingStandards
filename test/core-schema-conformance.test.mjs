@@ -224,6 +224,9 @@ test("records are plain JSON data judged as one snapshot: accessors, proxies, to
     rejectsPlain({ ...prod, notes: swap(o) });
   }
   rejectsPlain({ ...prod, notes: [new Map([["k", 1]])] });
+  // an arguments object stripped of length, callee and Symbol.iterator has no own keys left: only the built-in check can reject it
+  const args = Function("x", "return arguments")("visible"); for (const k of ["length", "callee", Symbol.iterator]) delete args[k];
+  assert.deepEqual(Reflect.ownKeys(args), ["0"]); rejectsPlain({ ...prod, notes: args });
   // entries the other checks would not catch on their own: strip what would reject them anyway, so only HAS_SLOTS decides
   const bare = (o) => { for (const k of Reflect.ownKeys(o)) { try { delete o[k]; } catch {} } return swap(o); };
   const gen = (function* () { yield 1; })();
