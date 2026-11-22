@@ -77,7 +77,7 @@ test("residualRisks and testRuns are plural array-typed core names", () => {
 
 // Reasons the schema does not express (evaluator-only rules). A fixture is schema-expressible when at least one of its
 // reasons is not in this list.
-const EVALUATOR_ONLY = ["secret material", "different digest", "redefines a core field", "no applicable run", "unknown test", "duplicate test id", "signing.status is not-evaluated", "record nesting", "record contains", "record has more", "record cannot", "record must be"];
+const EVALUATOR_ONLY = ["secret material", "different digest", "redefines a core field", "no applicable run", "unknown test", "duplicate test id", "signing.status is not-evaluated", "signing.status is failed", "record nesting", "record contains", "record has more", "record cannot", "record must be"];
 const reasonsOf = (r) => (Array.isArray(r.reason) ? r.reason : r.reason ? [r.reason] : []);
 const strip = ({ verdict, reason, case: _c, ...record }) => record;
 

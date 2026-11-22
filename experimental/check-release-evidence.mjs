@@ -243,6 +243,7 @@ export function evaluate(r) {
       }
       if (status !== ABSENT && SIGNING.includes(status) && status !== "not-evaluated") errors.push("signing.notApplicable is only valid with status not-evaluated");
     }
+    if (status === "failed") errors.push("signing.status is failed (a failed signing check is a rejection at every stage)");
     if (status === "not-evaluated" && na === ABSENT) notEvaluated.push("signing.status is not-evaluated and not declared not applicable (not a pass)");
   }
 
