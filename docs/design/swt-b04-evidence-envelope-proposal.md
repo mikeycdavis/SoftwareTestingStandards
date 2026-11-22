@@ -1,6 +1,6 @@
 # SWT-B04 design note: test evidence envelope and core release-evidence schema
 
-Status: **PROPOSAL, not frozen.** Fields, names, versioning and acceptance criteria need an owner decision. Apple/Android profiles must not freeze until this is frozen. The owner rulings recorded below (F1 to F7) shape this proposal; they do not freeze it.
+Status: **PROPOSAL.** Six items of the core are frozen as 0.1.0 by [swt-core-0.1.0-freeze.md](swt-core-0.1.0-freeze.md); everything else in this note remains a proposal and is not frozen. Fields, names, versioning and acceptance criteria need an owner decision. Apple/Android profiles must pin core 0.1.0 and must not be promoted to 1.0.0 before the core is. The owner rulings recorded below (F1 to F7) shape this proposal; they do not freeze it.
 
 ## 1. Test evidence envelope (one entry of `tests[]`)
 

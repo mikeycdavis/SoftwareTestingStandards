@@ -1,0 +1,79 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:standards:swt:release-evidence:core:0.1.0",
+  "title": "SWT release-evidence core 0.1.0",
+  "description": "Frozen core structure 0.1.0 (initial freeze, not 1.0.0). Describes the shape of PRESENT values only. Absence below stage production is not a schema violation: the evaluator (evaluate() in experimental/check-release-evidence.mjs) yields the outcome not-evaluated for it and never pass. At stage production the required fields below apply. Not expressed here, and not frozen: secret scanning, the digest-equality rule between artifact.digest and tests[].artifactDigest, record size and depth limits, and the profile-redefinition rule (evaluator only). Retention, approvals, rollback, provenance, distribution, the required fields of the manual branch, the content of residualRisks[] and testRuns[], and the Standard 02 amendment stay open.",
+  "x-coreVersion": "0.1.0",
+  "x-frozen": ["single envelope with per-kind branches", "source.dirty", "not-evaluated outcome", "residualRisks[]", "testRuns[]", "evaluate() result shape"],
+  "x-evaluateShape": { "verdict": ["pass", "reject", "not-evaluated"], "errors": "string[]", "notEvaluated": "string[]" },
+  "type": "object",
+  "properties": {
+    "artifact": {
+      "type": "object",
+      "properties": { "digest": { "type": "string", "pattern": "\\S" } }
+    },
+    "source": {
+      "type": "object",
+      "properties": { "dirty": { "type": "boolean" } }
+    },
+    "tests": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/testEnvelope" }
+    },
+    "testRuns": { "type": "array" },
+    "residualRisks": { "type": "array" },
+    "signing": {
+      "type": "object",
+      "properties": { "status": { "enum": ["not-evaluated", "attested", "ingested", "failed"] } }
+    },
+    "stage": { "enum": ["internal", "test", "staged", "production"] }
+  },
+  "allOf": [
+    {
+      "if": { "required": ["stage"], "properties": { "stage": { "const": "production" } } },
+      "then": {
+        "required": ["artifact", "source", "tests", "signing"],
+        "properties": {
+          "artifact": { "required": ["digest"] },
+          "source": { "required": ["dirty"], "properties": { "dirty": { "const": false } } },
+          "signing": { "required": ["status"] },
+          "tests": {
+            "items": {
+              "required": ["evidenceKind", "artifactDigest"],
+              "allOf": [
+                { "if": { "properties": { "evidenceKind": { "const": "automated" } } , "required": ["evidenceKind"] }, "then": { "required": ["command", "exitCode"] } }
+              ]
+            }
+          }
+        }
+      }
+    }
+  ],
+  "$defs": {
+    "testEnvelope": {
+      "type": "object",
+      "properties": {
+        "evidenceKind": { "enum": ["automated", "manual"] },
+        "artifactDigest": { "type": "string", "pattern": "\\S" },
+        "manual": { "type": "boolean" }
+      },
+      "allOf": [
+        {
+          "if": { "required": ["evidenceKind"], "properties": { "evidenceKind": { "const": "automated" } } },
+          "then": {
+            "properties": {
+              "command": { "type": "string", "pattern": "\\S" },
+              "exitCode": { "const": 0 },
+              "manual": { "not": { "const": true } }
+            }
+          }
+        },
+        {
+          "if": { "required": ["evidenceKind"], "properties": { "evidenceKind": { "const": "manual" } } },
+          "then": { "not": { "anyOf": [{ "required": ["command"] }, { "required": ["exitCode"] }] } }
+        }
+      ]
+    }
+  }
+}

@@ -1,5 +1,8 @@
-// EXPERIMENTAL: draft checker used only to exercise rejection fixtures. Not the schema; not frozen (C1). Field names,
-// stages and outcomes here are proposals (see docs/design/swt-b04-evidence-envelope-proposal.md) and may change.
+// EXPERIMENTAL checker. The core structure it evaluates is frozen as release-evidence core 0.1.0 by
+// schemas/release-evidence.core.0.1.0.schema.json (see docs/design/swt-core-0.1.0-freeze.md for exactly what is frozen
+// and what stays open). The frozen parts are: the single envelope with per-kind branches, source.dirty, the
+// not-evaluated outcome, the plural residualRisks[] and testRuns[] names, and the shape of evaluate()'s result. Everything
+// else here, including the secret scan, is NOT frozen and may change.
 //
 // Outcomes: evaluate(record) returns { verdict: "pass" | "reject" | "not-evaluated", errors, notEvaluated }.
 //   - A present-but-invalid value always rejects. A key that is present counts as present whatever its value (null included).
@@ -69,7 +72,8 @@
 //     records.
 //   - core group names (CORE) may not appear as a key at ANY depth (objects and arrays) inside any non-core top-level
 //     namespace (profile redefinition).
-// NOT validated here: approvals, residualRisks, testRuns, rollback, provenance and distribution are neither required
+// A top-level residualRisks or testRuns that is present must be an array (0.1.0); nothing inside them is validated.
+// NOT validated here: approvals, the content of residualRisks and testRuns, rollback, provenance and distribution are neither required
 // nor checked (they are in CORE only to block profile redefinition); source.revision, artifact.id, schemaVersion,
 // timestamps, environment, result, retention and the remaining content of the manual branch (beyond its digest binding and the absence of command/exitCode); core
 // group names nested inside core groups; unknown top-level keys whose values are not objects or arrays.
@@ -79,9 +83,9 @@ const nonEmpty = (v) => typeof v === "string" && v.trim() !== "";
 const ABSENT = Symbol("absent");
 const INVALID = Symbol("invalid");
 export const CORE = ["source", "artifact", "tests", "testRuns", "signing", "stage", "approvals", "residualRisks", "rollback", "provenance", "distribution"];
-const SIGNING = ["not-evaluated", "attested", "ingested", "failed"];
-const STAGES = ["internal", "test", "staged", "production"];
-const KINDS = ["automated", "manual"];
+export const SIGNING = ["not-evaluated", "attested", "ingested", "failed"];
+export const STAGES = ["internal", "test", "staged", "production"];
+export const KINDS = ["automated", "manual"];
 // One pattern per alternative so each is covered by its own fixture. Case-sensitive except where flagged "i".
 // The scan runs over JSON.stringify(record), so a double quote inside a string value appears as \" and a tab as \t.
 const R = String.raw;
@@ -260,6 +264,10 @@ export function evaluate(r) {
 
   if (stage === ABSENT) absent("stage required and in enum: internal, test, staged, production");
   else if (!STAGES.includes(stage)) errors.push("stage required and in enum: internal, test, staged, production");
+
+  // residualRisks and testRuns are reserved plural core names (0.1.0): when present at the top level they must be arrays.
+  // Their contents are not defined or validated in 0.1.0, and their absence is not evaluated here.
+  for (const name of ["residualRisks", "testRuns"]) if (has(r, name) && !Array.isArray(r[name])) errors.push(name + " must be an array");
 
   const source = group(r, "source", errors);
   const dirty = source === INVALID ? INVALID : field(source, "dirty");
