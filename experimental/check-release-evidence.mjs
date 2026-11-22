@@ -2,7 +2,7 @@
 // schemas/release-evidence.core.0.1.0.schema.json (see docs/design/swt-core-0.1.0-freeze.md for exactly what is frozen
 // and what stays open). The frozen parts are: the single envelope with per-kind branches (testRuns[] entries), tests[]
 // as required test identities, source.dirty, the not-evaluated outcome (including the production-required set: artifact.digest,
-// non-empty tests[], signing.status and the stage and signing enums, and that a declared signing status
+// non-empty tests[], testRuns[] covering every test, source.dirty, signing.status and the stage and signing enums, and that a declared signing status
 // not-evaluated never passes unless signing.notApplicable is declared, and a declared signing status failed rejects at every stage), the plural residualRisks[] and testRuns[]
 // names, and the shape of evaluate()'s result. Everything
 // else here, including the secret scan, is NOT frozen and may change.
@@ -76,7 +76,8 @@
 //   - robustness: a record nested deeper than MAX_DEPTH levels, with more than MAX_NODES values (every object, array and
 //     primitive counts, the record itself included, each time it is reached), containing a circular reference, or that
 //     cannot be serialised (for example a BigInt) is rejected before any other check; evaluate() does not throw for such
-//     records.
+//     records. Records that are not plain JSON data (accessor properties, proxies, a custom toJSON, class instances) are
+//     rejected by the same walk without invoking them; the record is then evaluated and secret-scanned as one JSON snapshot.
 //   - core group names (CORE) may not appear as a key at ANY depth (objects and arrays) inside any non-core top-level
 //     namespace (profile redefinition).
 // A top-level residualRisks or testRuns that is present must be an array (0.1.0). The content of residualRisks is not
@@ -90,6 +91,7 @@ const isObj = (v) => v !== null && typeof v === "object" && !Array.isArray(v);
 const nonEmpty = (v) => typeof v === "string" && v.trim() !== "";
 const ABSENT = Symbol("absent");
 const INVALID = Symbol("invalid");
+import { types } from "node:util";
 export const CORE = ["source", "artifact", "tests", "testRuns", "signing", "stage", "approvals", "residualRisks", "rollback", "provenance", "distribution"];
 export const SIGNING = ["not-evaluated", "attested", "ingested", "failed"];
 export const STAGES = ["internal", "test", "staged", "production"];
@@ -179,6 +181,7 @@ export const MAX_NODES = 1000000;
 // or circular, else null. A value shared by two parents without a cycle is not circular. Every value counts toward
 // MAX_NODES (the record itself, each object and array, and each primitive), counting a value each time it is reached.
 // The count is checked before a child is scheduled, so the walk's own allocation is bounded by MAX_NODES.
+const NOT_PLAIN = "record must be plain JSON data (no accessors, proxies, custom toJSON or class instances)";
 const TOO_MANY = "record has more than " + MAX_NODES + " values";
 function shapeError(r) {
   const stack = [{ v: r, d: 1 }];
@@ -193,15 +196,26 @@ function shapeError(r) {
     if (f.d > MAX_DEPTH) return "record nesting deeper than " + MAX_DEPTH + " levels";
     onPath.add(v);
     stack.push({ v, exit: true });
+    // Plain JSON data only, checked through property descriptors so that no getter, proxy trap or toJSON can run.
+    if (types.isProxy(v)) return NOT_PLAIN;
+    const proto = Object.getPrototypeOf(v);
     if (Array.isArray(v)) {
+      if (proto !== Array.prototype) return NOT_PLAIN;
       if (nodes + v.length > MAX_NODES) return TOO_MANY;
       nodes += v.length;
-      for (let i = 0; i < v.length; i++) schedule(v[i], f.d + 1);
+      for (let i = 0; i < v.length; i++) {
+        const d = Object.getOwnPropertyDescriptor(v, i);
+        if (!d) continue; // a hole: becomes null in the snapshot and is rejected as a non-object where an object is required
+        if (d.get || d.set) return NOT_PLAIN;
+        schedule(d.value, f.d + 1);
+      }
     } else {
-      for (const k in v) {
-        if (!Object.prototype.hasOwnProperty.call(v, k)) continue;
+      if (proto !== Object.prototype && proto !== null) return NOT_PLAIN;
+      for (const k of Object.keys(v)) {
         if (++nodes > MAX_NODES) return TOO_MANY;
-        schedule(v[k], f.d + 1);
+        const d = Object.getOwnPropertyDescriptor(v, k);
+        if (d.get || d.set || (k === "toJSON" && typeof d.value === "function")) return NOT_PLAIN;
+        schedule(d.value, f.d + 1);
       }
     }
   }
@@ -221,6 +235,10 @@ export function evaluate(r) {
   if (!isObj(r)) return { verdict: "reject", errors: ["record must be an object"], notEvaluated: [] };
   const shape = shapeError(r);
   if (shape) return { verdict: "reject", errors: [shape], notEvaluated: [] };
+  // Evaluate and scan one stable JSON snapshot: the shape walk above ran without invoking any accessor or toJSON, so the
+  // single stringify below reads each value once, and every later check and the secret scan use these same values.
+  let text;
+  try { text = JSON.stringify(r); r = JSON.parse(text); } catch { return { verdict: "reject", errors: ["record cannot be serialised"], notEvaluated: [] }; }
   const errors = [];
   const notEvaluated = [];
   const stage = has(r, "stage") ? r.stage : ABSENT;
@@ -322,8 +340,6 @@ export function evaluate(r) {
   else if (dirty !== INVALID && typeof dirty !== "boolean") errors.push("source.dirty required (boolean)");
   if (production && dirty !== false) errors.push("production requires source.dirty === false (dirty or missing is rejected)");
 
-  let text;
-  try { text = JSON.stringify(r); } catch { return { verdict: "reject", errors: ["record cannot be serialised"], notEvaluated: [] }; }
   for (const name of scanSecrets(text)) errors.push("secret material present: " + name);
 
   for (const ns of Object.keys(r)) {

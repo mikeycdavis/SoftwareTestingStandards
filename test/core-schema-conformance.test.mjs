@@ -142,3 +142,36 @@ test("schema requires tests and testRuns at production and a non-blank string te
   assert.equal(valid(schema, { ...rec, tests: [{ id: "" }] }), false);
   assert.equal(valid(schema, { ...noRuns, stage: "internal" }), true);
 });
+
+test("records are plain JSON data judged as one snapshot: accessors, proxies, toJSON and class instances are rejected uninvoked", () => {
+  const prod = strip(JSON.parse(readFileSync(new URL("valid-production-accepted.json", fixtureDir))));
+  assert.equal(evaluate(prod).verdict, "pass");
+  const rejectsPlain = (rec) => { const got = evaluate(rec); assert.equal(got.verdict, "reject"); assert.ok(got.errors.some((e) => e.includes("plain JSON data")), JSON.stringify(got)); };
+  // a getter that changes its answer on each read, and never gets to run
+  let reads = 0;
+  const changing = { ...prod, testRuns: [] };
+  Object.defineProperty(changing, "tests", { enumerable: true, get() { reads++; return reads <= 3 ? [{ id: "t0" }] : []; } });
+  rejectsPlain(changing);
+  assert.equal(reads, 0, "the getter must not be invoked");
+  // an accessor deeper in the record and inside an array
+  const deep = { ...prod, notes: { a: [1] } };
+  Object.defineProperty(deep.notes.a, 0, { enumerable: true, get() { reads++; return 1; } });
+  rejectsPlain(deep);
+  Object.defineProperty(deep.notes, "setter", { enumerable: true, set(v) {} });
+  rejectsPlain({ ...prod, notes: Object.defineProperty({}, "setter", { enumerable: true, set(v) {} }) });
+  // a toJSON method that would replace a branch before the secret scan
+  let called = 0;
+  const token = "ghp_" + "a".repeat(36);
+  rejectsPlain({ ...prod, notes: { toJSON() { called++; return "x"; }, token } });
+  assert.equal(called, 0, "toJSON must not be invoked");
+  assert.equal(evaluate({ ...prod, notes: { token } }).verdict, "reject", "the secret is found when there is no toJSON");
+  // proxies, class instances and dates
+  rejectsPlain({ ...prod, notes: new Proxy({}, { get() { reads++; throw new Error("trap"); }, ownKeys() { reads++; throw new Error("trap"); } }) });
+  rejectsPlain({ ...prod, notes: new (class X { constructor() { this.a = 1; } })() });
+  rejectsPlain({ ...prod, notes: new Date(0) });
+  rejectsPlain({ ...prod, testRuns: new Proxy(prod.testRuns, {}) });
+  assert.equal(evaluate({ ...prod, notes: Object.assign(Object.create(null), { a: 1 }) }).verdict, "pass");
+  // a hole in an array is a null in the snapshot and is not evaluated as a run
+  const sparse = { ...prod, testRuns: [, prod.testRuns[0]] };
+  assert.equal(evaluate(sparse).verdict, "reject");
+});
