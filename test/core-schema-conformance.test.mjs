@@ -242,11 +242,14 @@ test("records are plain JSON data judged as one snapshot: accessors, proxies, to
   // the snapshot keeps record key order, so errors are reported in record order
   const ordered = evaluate({ ...prod, x: { source: 1 }, y: { tests: 1 }, z: { stage: 1 } }).errors.filter((e) => e.startsWith("profile redefines"));
   assert.deepEqual(ordered, ["profile redefines a core field: x.source", "profile redefines a core field: y.tests", "profile redefines a core field: z.stage"]);
+  // an array with a swapped prototype is not plain data, and a vm global with the Array prototype runs no trap
+  for (const pr of [Object.prototype, null]) { const arr = Object.setPrototypeOf([prod.testRuns[0]], pr); rejectsPlain({ ...prod, residualRisks: arr }); rejectsPlain({ ...prod, testRuns: arr }); }
   // a vm global over a throwing Proxy sandbox: with its own prototype it is rejected before any key is read; with a swapped prototype evaluate() still must not throw
   {
     let calls = 0;
     const mk = () => vm.runInContext("this", vm.createContext(new Proxy({}, { ownKeys() { calls++; throw new Error("boom"); }, getOwnPropertyDescriptor() { calls++; throw new Error("boom"); } })));
     const g1 = mk(); rejectsPlain({ ...prod, notes: g1 }); assert.equal(calls, 0, "no trap may run when the prototype is not plain");
+    calls = 0; const g3 = Object.setPrototypeOf(mk(), Array.prototype); rejectsPlain({ ...prod, notes: g3 }); assert.equal(calls, 0, "a non-array with the Array prototype is rejected before any key is read");
     const g2 = Object.setPrototypeOf(mk(), Object.prototype);
     assert.doesNotThrow(() => evaluate({ ...prod, notes: g2 }));
     assert.equal(evaluate({ ...prod, notes: g2 }).verdict, "reject");
