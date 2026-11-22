@@ -217,6 +217,13 @@ test("records are plain JSON data judged as one snapshot: accessors, proxies, to
   const symArr = { ...prod, tests: [...prod.tests] }; sk(symArr.tests, true); rejectsPlain(symArr);
   const symRun = { ...prod, testRuns: [{ ...prod.testRuns[0] }] }; sk(symRun.testRuns[0], false); rejectsPlain(symRun);
   for (const n of [NaN, Infinity, -Infinity]) for (const rec of [{ ...prod, notes: n }, { ...prod, notes: { a: [n] } }]) { const got = evaluate(rec); assert.equal(got.verdict, "reject"); assert.ok(got.errors.some((e) => e.includes("not JSON")), JSON.stringify(got)); }
+  // built-ins with internal slots are never plain data, even with the prototype swapped to Object.prototype (contents would be dropped, unscanned)
+  const swap = (o) => Object.setPrototypeOf(o, Object.prototype);
+  for (const o of [new Date(), new Map([["k", "ghp_" + "a".repeat(36)]]), new Set(["x"]), new Uint8Array([7, 8]), new ArrayBuffer(2), new DataView(new ArrayBuffer(2)), /x/, new Error("e"), Promise.resolve(1), new WeakMap(), new WeakSet()]) {
+    rejectsPlain({ ...prod, notes: o });
+    rejectsPlain({ ...prod, notes: swap(o) });
+  }
+  rejectsPlain({ ...prod, notes: [new Map([["k", 1]])] });
   // boxed primitives (even with a swapped prototype) carry a value JSON cannot represent as data: reject, never drop
   rejectsPlain({ ...prod, notes: Object(5) });
   rejectsPlain({ ...prod, notes: Object.setPrototypeOf(Object(1n), null) });

@@ -77,7 +77,7 @@
 //     primitive counts, the record itself included, each time it is reached), containing a circular reference, or that
 //     cannot be serialised (for example a BigInt) is rejected before any other check; evaluate() does not throw for such
 //     records. Records that are not plain JSON data (accessor properties, proxies, a toJSON of any enumerability, class instances,
-//     array subclasses, objects from another realm (except a null-prototype one, which is plain data), boxed primitives, module namespaces, any own key named toJSON, extra array properties, non-enumerable own properties or indices, undefined, function or symbol values) are rejected by the same walk without invoking anything; the record is then evaluated and secret-scanned as one JSON snapshot.
+//     array subclasses, objects from another realm (except a null-prototype one, which is plain data), boxed primitives, objects with internal slots (Date, Map, Set, typed arrays, RegExp, Error and similar, even with a swapped prototype), module namespaces, any own key named toJSON, extra array properties, non-enumerable own properties or indices, undefined, function or symbol values) are rejected by the same walk without invoking anything; the record is then evaluated and secret-scanned as one JSON snapshot.
 //   - core group names (CORE) may not appear as a key at ANY depth (objects and arrays) inside any non-core top-level
 //     namespace (profile redefinition).
 // A top-level residualRisks or testRuns that is present must be an array (0.1.0). The content of residualRisks is not
@@ -181,6 +181,9 @@ export const MAX_NODES = 1000000;
 // parents without a cycle is not circular. Every value counts toward MAX_NODES (the record itself, each object and array
 // and each primitive), counting a value each time it is reached. The count is checked before a child is scheduled.
 const NOT_JSON = "record contains a value that is not JSON (undefined, function or symbol)";
+// Built-ins with internal slots hold data that a property walk cannot see (Map and Set contents, typed-array bytes, a Date value). With a swapped
+// prototype they would otherwise snapshot as plain data and their contents would be silently dropped, so they are never plain data.
+const HAS_SLOTS = [types.isDate, types.isMap, types.isSet, types.isWeakMap, types.isWeakSet, types.isPromise, types.isTypedArray, types.isAnyArrayBuffer, types.isDataView, types.isRegExp, types.isNativeError, types.isGeneratorObject, types.isArgumentsObject, types.isMapIterator, types.isSetIterator];
 const NOT_PLAIN = "record must be plain JSON data (no accessors, proxies, custom toJSON or class instances)";
 const TOO_MANY = "record has more than " + MAX_NODES + " values";
 // Builds the one JSON snapshot that the whole evaluation and the secret scan use. Returns { error } or { value }. It reads
@@ -202,7 +205,7 @@ function snapshotOf(r) {
     if (v === undefined || typeof v === "function" || typeof v === "symbol") return { error: NOT_JSON };
     if (typeof v === "number" && !Number.isFinite(v)) return { error: NOT_JSON }; // JSON would turn NaN/Infinity into null: evaluation and scan must see the same value
     if (v === null || typeof v !== "object") { f.set(v); continue; }
-    if (types.isProxy(v) || types.isBoxedPrimitive(v) || types.isModuleNamespaceObject(v)) return { error: NOT_PLAIN };
+    if (types.isProxy(v) || types.isBoxedPrimitive(v) || types.isModuleNamespaceObject(v) || HAS_SLOTS.some((f) => f(v))) return { error: NOT_PLAIN };
     if (onPath.has(v)) return { error: "record contains a circular reference" };
     if (f.d > MAX_DEPTH) return { error: "record nesting deeper than " + MAX_DEPTH + " levels" };
     onPath.add(v);
@@ -308,7 +311,7 @@ export function evaluate(input) {
   else if (!Array.isArray(r.tests) || r.tests.length === 0) errors.push("tests required and non-empty (no tests is not a pass)");
   else {
     testsListed = true;
-    Array.from(r.tests).forEach((t, i) => { // Array.from turns holes into undefined, so a sparse array rejects
+    Array.from(r.tests).forEach((t, i) => { // the snapshot turns a hole into null, so a sparse array rejects as a non-object
       if (!isObj(t)) { errors.push("tests[" + i + "] must be an object"); return; }
       if (!has(t, "id")) absent("tests[" + i + "].id required (test identity)");
       else if (!nonEmpty(t.id)) errors.push("tests[" + i + "].id required (non-empty string)");
