@@ -1,0 +1,1 @@
+{"verdict":"reject","reason":"test artifactDigest required","case":"production-test-digest-whitespace","schemaVersion":"0.0.0-draft","artifact":{"id":"app","digest":"sha256:aaaa"},"source":{"revision":"abc123","dirty":false},"tests":[{"evidenceKind":"automated","artifactDigest":"   ","command":"npm test","exitCode":0}],"signing":{"status":"not-evaluated"},"stage":"production"}
