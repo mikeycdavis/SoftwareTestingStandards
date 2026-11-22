@@ -211,6 +211,12 @@ test("records are plain JSON data judged as one snapshot: accessors, proxies, to
   const ne7 = { ...prod, testRuns: [...prod.testRuns] }; hideIdx(ne7.testRuns, 0);
   const ne8 = { ...prod, residualRisks: [{ owner: "x" }] }; hideIdx(ne8.residualRisks, 0);
   for (const ne of [ne1, ne2, ne3, ne4, ne5, ne6, ne7, ne8]) rejectsPlain(ne);
+  // symbol keys and non-finite numbers are not JSON data: reject (the scan would otherwise see a different record)
+  const sk = (o, get) => Object.defineProperty(o, Symbol("hidden"), get ? { get() { throw new Error("must not run"); } } : { value: "ghp_" + "a".repeat(36), enumerable: true });
+  rejectsPlain(sk({ ...prod }, true)); rejectsPlain(sk({ ...prod }, false));
+  const symArr = { ...prod, tests: [...prod.tests] }; sk(symArr.tests, true); rejectsPlain(symArr);
+  const symRun = { ...prod, testRuns: [{ ...prod.testRuns[0] }] }; sk(symRun.testRuns[0], false); rejectsPlain(symRun);
+  for (const n of [NaN, Infinity, -Infinity]) for (const rec of [{ ...prod, notes: n }, { ...prod, notes: { a: [n] } }]) { const got = evaluate(rec); assert.equal(got.verdict, "reject"); assert.ok(got.errors.some((e) => e.includes("not JSON")), JSON.stringify(got)); }
   // boxed primitives (even with a swapped prototype) carry a value JSON cannot represent as data: reject, never drop
   rejectsPlain({ ...prod, notes: Object(5) });
   rejectsPlain({ ...prod, notes: Object.setPrototypeOf(Object(1n), null) });

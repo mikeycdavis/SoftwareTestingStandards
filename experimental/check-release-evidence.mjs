@@ -187,7 +187,7 @@ const TOO_MANY = "record has more than " + MAX_NODES + " values";
 // only property descriptors, so no getter, setter, proxy trap, valueOf or toJSON can run, and it copies into plain
 // null-prototype objects (and ordinary arrays), so no toJSON of the caller's can run later. A globally polluted Object.prototype or Array.prototype (a toJSON added to a built-in prototype) is out of scope: it is not something a record can do.
 // A record must be plain JSON data: accessors, proxies, an own toJSON of any kind, non-plain prototypes (class instances, array subclasses, objects from another realm) and
-// extra non-index array properties and non-enumerable own properties are rejected, symbol-keyed properties are ignored (as in JSON), and so are undefined, function and symbol values (JSON.stringify would
+// extra non-index array properties and non-enumerable own properties are rejected, symbol-keyed properties and non-finite numbers (NaN, Infinity) are rejected too, as are undefined, function and symbol values (JSON.stringify would
 // silently drop them and turn an invalid present value into an absent one). A hole in an array becomes null, as in JSON.
 function snapshotOf(r) {
   const root = { v: r, d: 1, set: (x) => { root.out = x; } };
@@ -200,6 +200,7 @@ function snapshotOf(r) {
     const v = f.v;
     if (typeof v === "bigint") return { error: "record cannot be serialised" };
     if (v === undefined || typeof v === "function" || typeof v === "symbol") return { error: NOT_JSON };
+    if (typeof v === "number" && !Number.isFinite(v)) return { error: NOT_JSON }; // JSON would turn NaN/Infinity into null: evaluation and scan must see the same value
     if (v === null || typeof v !== "object") { f.set(v); continue; }
     if (types.isProxy(v) || types.isBoxedPrimitive(v) || types.isModuleNamespaceObject(v)) return { error: NOT_PLAIN };
     if (onPath.has(v)) return { error: "record contains a circular reference" };
@@ -207,7 +208,8 @@ function snapshotOf(r) {
     onPath.add(v);
     stack.push({ v, exit: true });
     const proto = Object.getPrototypeOf(v);
-    const names = Object.getOwnPropertyNames(v);
+    const names = Reflect.ownKeys(v);
+    if (names.some((k) => typeof k === "symbol")) return { error: NOT_PLAIN }; // a symbol-keyed property is not JSON data: never dropped silently
     if (names.includes("toJSON")) return { error: NOT_PLAIN };
     if (Array.isArray(v)) {
       if (proto !== Array.prototype) return { error: NOT_PLAIN };
