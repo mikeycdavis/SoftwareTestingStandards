@@ -77,7 +77,7 @@
 //     primitive counts, the record itself included, each time it is reached), containing a circular reference, or that
 //     cannot be serialised (for example a BigInt) is rejected before any other check; evaluate() does not throw for such
 //     records. Records that are not plain JSON data (accessor properties, proxies, a toJSON of any enumerability, class instances,
-//     array subclasses, undefined, function or symbol values) are rejected by the same walk without invoking anything; the record is then evaluated and secret-scanned as one JSON snapshot.
+//     array subclasses, objects from another realm, any own key named toJSON, extra array properties, non-enumerable own properties or indices, undefined, function or symbol values) are rejected by the same walk without invoking anything; the record is then evaluated and secret-scanned as one JSON snapshot.
 //   - core group names (CORE) may not appear as a key at ANY depth (objects and arrays) inside any non-core top-level
 //     namespace (profile redefinition).
 // A top-level residualRisks or testRuns that is present must be an array (0.1.0). The content of residualRisks is not
@@ -230,7 +230,7 @@ function snapshotOf(r) {
       if (proto !== Object.prototype && proto !== null) return { error: NOT_PLAIN };
       const out = Object.create(null);
       f.set(out);
-      for (const k of names) {
+      for (const k of [...names].reverse()) { // reversed so the LIFO stack defines keys in record order
         const d = Object.getOwnPropertyDescriptor(v, k);
         if (d.get || d.set) return { error: NOT_PLAIN };
         if (!d.enumerable) return { error: NOT_PLAIN }; // JSON would drop it, turning a present invalid value into an absent one
