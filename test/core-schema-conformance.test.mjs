@@ -157,7 +157,6 @@ test("records are plain JSON data judged as one snapshot: accessors, proxies, to
   const deep = { ...prod, notes: { a: [1] } };
   Object.defineProperty(deep.notes.a, 0, { enumerable: true, get() { reads++; return 1; } });
   rejectsPlain(deep);
-  Object.defineProperty(deep.notes, "setter", { enumerable: true, set(v) {} });
   rejectsPlain({ ...prod, notes: Object.defineProperty({}, "setter", { enumerable: true, set(v) {} }) });
   // a toJSON method that would replace a branch before the secret scan
   let called = 0;
@@ -171,6 +170,37 @@ test("records are plain JSON data judged as one snapshot: accessors, proxies, to
   rejectsPlain({ ...prod, notes: new Date(0) });
   rejectsPlain({ ...prod, testRuns: new Proxy(prod.testRuns, {}) });
   assert.equal(evaluate({ ...prod, notes: Object.assign(Object.create(null), { a: 1 }) }).verdict, "pass");
+  // toJSON that is not enumerable, on an object or an array, as a function or an accessor, hiding data or a secret
+  const hidden = (host, kind) => {
+    let n = 0;
+    const desc = kind === "fn" ? { value() { n++; return host === "arr" ? [] : "x"; } } : { get() { n++; return () => "x"; } };
+    return { desc, count: () => n };
+  };
+  for (const kind of ["fn", "get"]) {
+    const h1 = hidden("obj", kind); const o = { token }; Object.defineProperty(o, "toJSON", h1.desc);
+    rejectsPlain({ ...prod, notes: o });
+    const h2 = hidden("arr", kind); const a = [token]; Object.defineProperty(a, "toJSON", h2.desc);
+    rejectsPlain({ ...prod, notes: a });
+    const h3 = hidden("arr", kind); const t = [{ id: "t0" }]; Object.defineProperty(t, "toJSON", h3.desc);
+    rejectsPlain({ ...prod, tests: t, testRuns: [] });
+    const h4 = hidden("obj", kind); const top = { ...prod, tests: [] }; Object.defineProperty(top, "toJSON", h4.desc);
+    rejectsPlain(top);
+    assert.equal(h1.count() + h2.count() + h3.count() + h4.count(), 0, "no toJSON may be invoked");
+  }
+  // array subclasses and extra array properties
+  rejectsPlain({ ...prod, notes: new (class A extends Array {})() });
+  const extra = [1]; extra.note = "x";
+  rejectsPlain({ ...prod, notes: extra });
+  // values JSON would silently drop are rejected, not treated as absent
+  for (const bad of [undefined, () => true, Symbol("s")]) {
+    const got = evaluate({ ...prod, testRuns: [{ ...prod.testRuns[0], manual: bad }] });
+    assert.equal(got.verdict, "reject");
+    assert.ok(got.errors.some((e) => e.includes("not JSON")), JSON.stringify(got));
+    assert.equal(evaluate({ ...prod, stage: "internal", signing: { status: "attested", notApplicable: bad } }).verdict, "reject");
+  }
+  // a revoked proxy as the whole record does not throw
+  const rev = Proxy.revocable({}, {}); rev.revoke();
+  rejectsPlain(rev.proxy);
   // a hole in an array is a null in the snapshot and is not evaluated as a run
   const sparse = { ...prod, testRuns: [, prod.testRuns[0]] };
   assert.equal(evaluate(sparse).verdict, "reject");

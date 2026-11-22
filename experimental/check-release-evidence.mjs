@@ -76,8 +76,8 @@
 //   - robustness: a record nested deeper than MAX_DEPTH levels, with more than MAX_NODES values (every object, array and
 //     primitive counts, the record itself included, each time it is reached), containing a circular reference, or that
 //     cannot be serialised (for example a BigInt) is rejected before any other check; evaluate() does not throw for such
-//     records. Records that are not plain JSON data (accessor properties, proxies, a custom toJSON, class instances) are
-//     rejected by the same walk without invoking them; the record is then evaluated and secret-scanned as one JSON snapshot.
+//     records. Records that are not plain JSON data (accessor properties, proxies, a toJSON of any enumerability, class instances,
+//     array subclasses, undefined, function or symbol values) are rejected by the same walk without invoking anything; the record is then evaluated and secret-scanned as one JSON snapshot.
 //   - core group names (CORE) may not appear as a key at ANY depth (objects and arrays) inside any non-core top-level
 //     namespace (profile redefinition).
 // A top-level residualRisks or testRuns that is present must be an array (0.1.0). The content of residualRisks is not
@@ -181,45 +181,65 @@ export const MAX_NODES = 1000000;
 // or circular, else null. A value shared by two parents without a cycle is not circular. Every value counts toward
 // MAX_NODES (the record itself, each object and array, and each primitive), counting a value each time it is reached.
 // The count is checked before a child is scheduled, so the walk's own allocation is bounded by MAX_NODES.
+const NOT_JSON = "record contains a value that is not JSON (undefined, function or symbol)";
 const NOT_PLAIN = "record must be plain JSON data (no accessors, proxies, custom toJSON or class instances)";
 const TOO_MANY = "record has more than " + MAX_NODES + " values";
-function shapeError(r) {
-  const stack = [{ v: r, d: 1 }];
+// Builds the one JSON snapshot that the whole evaluation and the secret scan use. Returns { error } or { value }. It reads
+// only property descriptors, so no getter, setter, proxy trap, valueOf or toJSON can run, and it copies into plain
+// null-prototype objects (and ordinary arrays), so no toJSON of the caller's can run later. A globally polluted Object.prototype or Array.prototype (a toJSON added to a built-in prototype) is out of scope: it is not something a record can do.
+// A record must be plain JSON data: accessors, proxies, an own toJSON of any kind, class instances, array subclasses and
+// extra non-index array properties are rejected, and so are undefined, function and symbol values (JSON.stringify would
+// silently drop them and turn an invalid present value into an absent one). A hole in an array becomes null, as in JSON.
+function snapshotOf(r) {
+  const root = { v: r, d: 1, set: (x) => { root.out = x; } };
+  const stack = [root];
   const onPath = new Set();
   let nodes = 1;
-  const schedule = (x, d) => { if (x !== null && typeof x === "object") stack.push({ v: x, d }); };
   while (stack.length) {
     const f = stack.pop();
     if (f.exit) { onPath.delete(f.v); continue; }
     const v = f.v;
-    if (onPath.has(v)) return "record contains a circular reference";
-    if (f.d > MAX_DEPTH) return "record nesting deeper than " + MAX_DEPTH + " levels";
+    if (typeof v === "bigint") return { error: "record cannot be serialised" };
+    if (v === undefined || typeof v === "function" || typeof v === "symbol") return { error: NOT_JSON };
+    if (v === null || typeof v !== "object") { f.set(v); continue; }
+    if (types.isProxy(v)) return { error: NOT_PLAIN };
+    if (onPath.has(v)) return { error: "record contains a circular reference" };
+    if (f.d > MAX_DEPTH) return { error: "record nesting deeper than " + MAX_DEPTH + " levels" };
     onPath.add(v);
     stack.push({ v, exit: true });
-    // Plain JSON data only, checked through property descriptors so that no getter, proxy trap or toJSON can run.
-    if (types.isProxy(v)) return NOT_PLAIN;
     const proto = Object.getPrototypeOf(v);
+    const names = Object.getOwnPropertyNames(v);
+    if (names.includes("toJSON")) return { error: NOT_PLAIN };
     if (Array.isArray(v)) {
-      if (proto !== Array.prototype) return NOT_PLAIN;
-      if (nodes + v.length > MAX_NODES) return TOO_MANY;
+      if (proto !== Array.prototype) return { error: NOT_PLAIN };
+      if (nodes + v.length > MAX_NODES) return { error: TOO_MANY };
       nodes += v.length;
+      const out = new Array(v.length).fill(null);
+      f.set(out);
+      for (const k of names) {
+        if (k === "length") continue;
+        if (!/^(?:0|[1-9][0-9]*)$/.test(k) || Number(k) >= v.length) return { error: NOT_PLAIN };
+      }
       for (let i = 0; i < v.length; i++) {
         const d = Object.getOwnPropertyDescriptor(v, i);
-        if (!d) continue; // a hole: becomes null in the snapshot and is rejected as a non-object where an object is required
-        if (d.get || d.set) return NOT_PLAIN;
-        schedule(d.value, f.d + 1);
+        if (!d) continue;
+        if (d.get || d.set) return { error: NOT_PLAIN };
+        stack.push({ v: d.value, d: f.d + 1, set: (x) => { out[i] = x; } });
       }
     } else {
-      if (proto !== Object.prototype && proto !== null) return NOT_PLAIN;
-      for (const k of Object.keys(v)) {
-        if (++nodes > MAX_NODES) return TOO_MANY;
+      if (proto !== Object.prototype && proto !== null) return { error: NOT_PLAIN };
+      const out = Object.create(null);
+      f.set(out);
+      for (const k of names) {
         const d = Object.getOwnPropertyDescriptor(v, k);
-        if (d.get || d.set || (k === "toJSON" && typeof d.value === "function")) return NOT_PLAIN;
-        schedule(d.value, f.d + 1);
+        if (d.get || d.set) return { error: NOT_PLAIN };
+        if (!d.enumerable) continue;
+        if (++nodes > MAX_NODES) return { error: TOO_MANY };
+        stack.push({ v: d.value, d: f.d + 1, set: (x) => { Object.defineProperty(out, k, { value: x, enumerable: true, writable: true, configurable: true }); } });
       }
     }
   }
-  return null;
+  return { value: root.out };
 }
 
 function coreKeysIn(v, path, out) {
@@ -231,14 +251,15 @@ function coreKeysIn(v, path, out) {
   return out;
 }
 
-export function evaluate(r) {
-  if (!isObj(r)) return { verdict: "reject", errors: ["record must be an object"], notEvaluated: [] };
-  const shape = shapeError(r);
-  if (shape) return { verdict: "reject", errors: [shape], notEvaluated: [] };
-  // Evaluate and scan one stable JSON snapshot: the shape walk above ran without invoking any accessor or toJSON, so the
-  // single stringify below reads each value once, and every later check and the secret scan use these same values.
+export function evaluate(input) {
+  if (types.isProxy(input)) return { verdict: "reject", errors: [NOT_PLAIN], notEvaluated: [] };
+  if (!isObj(input)) return { verdict: "reject", errors: ["record must be an object"], notEvaluated: [] };
+  const snap = snapshotOf(input);
+  if (snap.error) return { verdict: "reject", errors: [snap.error], notEvaluated: [] };
+  // r is the one snapshot: every check below and the secret scan read these values, never the caller's object again.
+  const r = snap.value;
   let text;
-  try { text = JSON.stringify(r); r = JSON.parse(text); } catch { return { verdict: "reject", errors: ["record cannot be serialised"], notEvaluated: [] }; }
+  try { text = JSON.stringify(r); } catch { return { verdict: "reject", errors: ["record cannot be serialised"], notEvaluated: [] }; }
   const errors = [];
   const notEvaluated = [];
   const stage = has(r, "stage") ? r.stage : ABSENT;
