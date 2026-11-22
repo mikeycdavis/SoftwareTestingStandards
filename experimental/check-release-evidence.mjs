@@ -3,7 +3,7 @@
 // and what stays open). The frozen parts are: the single envelope with per-kind branches (testRuns[] entries), tests[]
 // as required test identities, source.dirty, the not-evaluated outcome (including the production-required set: artifact.digest,
 // non-empty tests[], signing.status and the stage and signing enums, and that a declared signing status
-// not-evaluated never passes unless signing.notApplicable is declared), the plural residualRisks[] and testRuns[]
+// not-evaluated never passes unless signing.notApplicable is declared, and a declared signing status failed rejects at every stage), the plural residualRisks[] and testRuns[]
 // names, and the shape of evaluate()'s result. Everything
 // else here, including the secret scan, is NOT frozen and may change.
 //
@@ -23,7 +23,7 @@
 //     per run, testId, evidenceKind (automated | manual) and artifactDigest (non-empty string, equal to artifact.digest
 //     when that is valid); for automated runs only, command (non-empty string) and exitCode (must be 0); signing.status
 //     (a declared not-evaluated never passes: the verdict is not-evaluated unless signing.notApplicable declares a non-blank
-//     basis and attestedBy; notApplicable is rejected when malformed or alongside any other status) (not-evaluated | attested |
+//     basis and attestedBy; notApplicable is rejected when malformed or alongside any other status; a declared failed always rejects) (not-evaluated | attested |
 //     ingested | failed); stage (internal | test | staged | production); source.dirty (boolean, required at every stage).
 //   - stage "production" additionally requires source.dirty === false (a dirty source is valid below production).
 //   - test.manual is optional; when present it must be a boolean (manual: "false", 1, null are rejected as an invalid

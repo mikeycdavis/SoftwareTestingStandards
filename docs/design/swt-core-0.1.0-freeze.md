@@ -28,7 +28,7 @@ The evaluator checks that a `notApplicable` basis and an attester are declared, 
 
 ## What the schema does and does not express
 
-The schema describes present values. It cannot say "absent is not-evaluated" or "every test has a run"; those are the evaluator's contract (items 2, 4 and 5). The conformance test requires, for every fixture, that the schema accepts the present values of each pass and not-evaluated fixture, and rejects each reject fixture whose reason is structural. Fixtures whose only reasons are evaluator-only rules (secret scan, digest equality, test mapping, profile redefinition, record limits) are not compared against the schema.
+The schema describes present values. It cannot say "absent is not-evaluated" or "every test has a run"; those are the evaluator's contract (items 2, 4 and 5). The conformance test requires, for every fixture, that the schema accepts the present values of each pass and not-evaluated fixture, and rejects each reject fixture whose reason is structural. Fixtures whose only reasons are evaluator-only rules (secret scan, digest equality, test mapping, the two signing verdict rules, profile redefinition, record limits) are not compared against the schema.
 
 ## Changes in this PR beyond the schema
 
