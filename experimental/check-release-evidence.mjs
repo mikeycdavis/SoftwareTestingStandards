@@ -1,7 +1,8 @@
 // EXPERIMENTAL checker. The core structure it evaluates is frozen as release-evidence core 0.1.0 by
 // schemas/release-evidence.core.0.1.0.schema.json (see docs/design/swt-core-0.1.0-freeze.md for exactly what is frozen
 // and what stays open). The frozen parts are: the single envelope with per-kind branches (testRuns[] entries), tests[]
-// as required test identities, source.dirty, the not-evaluated outcome (including that a declared signing status
+// as required test identities, source.dirty, the not-evaluated outcome (including the production-required set: artifact.digest,
+// non-empty tests[], signing.status and the stage and signing enums, and that a declared signing status
 // not-evaluated never passes unless signing.notApplicable is declared), the plural residualRisks[] and testRuns[]
 // names, and the shape of evaluate()'s result. Everything
 // else here, including the secret scan, is NOT frozen and may change.
@@ -78,8 +79,9 @@
 //     records.
 //   - core group names (CORE) may not appear as a key at ANY depth (objects and arrays) inside any non-core top-level
 //     namespace (profile redefinition).
-// A top-level residualRisks or testRuns that is present must be an array (0.1.0); nothing inside them is validated.
-// NOT validated here: approvals, the content of residualRisks and testRuns, rollback, provenance and distribution are neither required
+// A top-level residualRisks or testRuns that is present must be an array (0.1.0). The content of residualRisks is not
+// validated; every testRuns entry is validated as an envelope (see above). Extra fields on a tests[] entry are ignored.
+// NOT validated here: approvals, the content of residualRisks, rollback, provenance and distribution are neither required
 // nor checked (they are in CORE only to block profile redefinition); source.revision, artifact.id, schemaVersion,
 // timestamps, environment, result, retention and the remaining content of the manual branch (beyond its digest binding and the absence of command/exitCode); core
 // group names nested inside core groups; unknown top-level keys whose values are not objects or arrays.
@@ -310,7 +312,7 @@ export function evaluate(r) {
   else if (!STAGES.includes(stage)) errors.push("stage required and in enum: internal, test, staged, production");
 
   // residualRisks and testRuns are reserved plural core names (0.1.0): when present at the top level they must be arrays.
-  // Their contents are not defined or validated in 0.1.0, and their absence is not evaluated here.
+  // residualRisks content is not defined or validated in 0.1.0; testRuns entries are validated as envelopes above.
   for (const name of ["residualRisks", "testRuns"]) if (has(r, name) && !Array.isArray(r[name])) errors.push(name + " must be an array");
 
   const source = group(r, "source", errors);

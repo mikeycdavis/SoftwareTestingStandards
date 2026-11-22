@@ -129,3 +129,16 @@ test("source.dirty is a boolean at every stage and false at production", () => {
   assert.equal(valid(schema, rec), true);
   assert.equal(valid(schema, { ...rec, source: { ...rec.source, dirty: true } }), false);
 });
+
+test("schema requires tests and testRuns at production and a non-blank string testId", () => {
+  const rec = strip(JSON.parse(readFileSync(new URL("valid-production-accepted.json", fixtureDir))));
+  assert.equal(valid(schema, rec), true);
+  const { tests, ...noTests } = rec;
+  const { testRuns, ...noRuns } = rec;
+  assert.equal(valid(schema, noTests), false);
+  assert.equal(valid(schema, noRuns), false);
+  assert.equal(valid(schema, { ...rec, testRuns: [{ ...rec.testRuns[0], testId: "  " }] }), false);
+  assert.equal(valid(schema, { ...rec, testRuns: [{ ...rec.testRuns[0], testId: 7 }] }), false);
+  assert.equal(valid(schema, { ...rec, tests: [{ id: "" }] }), false);
+  assert.equal(valid(schema, { ...noRuns, stage: "internal" }), true);
+});
