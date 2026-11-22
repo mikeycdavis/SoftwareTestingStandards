@@ -183,6 +183,7 @@ export const MAX_NODES = 1000000;
 const NOT_JSON = "record contains a value that is not JSON (undefined, function or symbol)";
 // Built-ins with internal slots hold data that a property walk cannot see (Map and Set contents, typed-array bytes, a Date value). With a swapped
 // prototype they would otherwise snapshot as plain data and their contents would be silently dropped, so they are never plain data.
+// A host object that forwards reflection to caller code (the global of a vm context built over a Proxy sandbox) with its prototype swapped to Object.prototype cannot be told from a plain object by any reflective call and is out of scope like a polluted Object.prototype: it requires deliberately building such a context, and its keys are read through the caller's traps.
 // This is best effort, and the residual is not a gap in the verdict: an object whose hidden state generic reflection cannot reach (a class with #private fields, or a WeakRef, URL, Intl object or iterator, with its prototype deliberately swapped to Object.prototype) snapshots exactly as JSON.stringify of the caller's original would (as {}), so the JSON record that is stored or consumed never held that state, no code runs, and evaluation and the secret scan see the same values.
 const HAS_SLOTS = [types.isDate, types.isMap, types.isSet, types.isWeakMap, types.isWeakSet, types.isPromise, types.isTypedArray, types.isAnyArrayBuffer, types.isDataView, types.isNativeError, types.isArgumentsObject, types.isGeneratorObject, types.isMapIterator, types.isSetIterator];
 const NOT_PLAIN = "record must be plain JSON data (no accessors, proxies, custom toJSON or class instances)";
@@ -212,6 +213,8 @@ function snapshotOf(r) {
     onPath.add(v);
     stack.push({ v, exit: true });
     const proto = Object.getPrototypeOf(v);
+    // the prototype is checked before any key is read: reading keys of a host object (a vm context global) can forward to caller code
+    if (proto !== Object.prototype && proto !== null && proto !== Array.prototype) return { error: NOT_PLAIN };
     const names = Reflect.ownKeys(v);
     if (names.some((k) => typeof k === "symbol")) return { error: NOT_PLAIN }; // a symbol-keyed property is not JSON data: never dropped silently
     if (names.includes("toJSON")) return { error: NOT_PLAIN };

@@ -5,6 +5,7 @@
 //   4. evaluate() keeps its frozen result shape.
 // The validator below implements only the JSON Schema keywords the core schema uses. It is test support, not a product.
 import { test } from "node:test";
+import vm from "node:vm";
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { readdirSync, readFileSync } from "node:fs";
@@ -241,6 +242,15 @@ test("records are plain JSON data judged as one snapshot: accessors, proxies, to
   // the snapshot keeps record key order, so errors are reported in record order
   const ordered = evaluate({ ...prod, x: { source: 1 }, y: { tests: 1 }, z: { stage: 1 } }).errors.filter((e) => e.startsWith("profile redefines"));
   assert.deepEqual(ordered, ["profile redefines a core field: x.source", "profile redefines a core field: y.tests", "profile redefines a core field: z.stage"]);
+  // a vm global over a throwing Proxy sandbox: with its own prototype it is rejected before any key is read; with a swapped prototype evaluate() still must not throw
+  {
+    let calls = 0;
+    const mk = () => vm.runInContext("this", vm.createContext(new Proxy({}, { ownKeys() { calls++; throw new Error("boom"); }, getOwnPropertyDescriptor() { calls++; throw new Error("boom"); } })));
+    const g1 = mk(); rejectsPlain({ ...prod, notes: g1 }); assert.equal(calls, 0, "no trap may run when the prototype is not plain");
+    const g2 = Object.setPrototypeOf(mk(), Object.prototype);
+    assert.doesNotThrow(() => evaluate({ ...prod, notes: g2 }));
+    assert.equal(evaluate({ ...prod, notes: g2 }).verdict, "reject");
+  }
   // a revoked proxy as the whole record does not throw
   const rev = Proxy.revocable({}, {}); rev.revoke();
   rejectsPlain(rev.proxy);
