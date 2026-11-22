@@ -224,6 +224,13 @@ test("records are plain JSON data judged as one snapshot: accessors, proxies, to
     rejectsPlain({ ...prod, notes: swap(o) });
   }
   rejectsPlain({ ...prod, notes: [new Map([["k", 1]])] });
+  // entries the other checks would not catch on their own: strip what would reject them anyway, so only HAS_SLOTS decides
+  const bare = (o) => { for (const k of Reflect.ownKeys(o)) { try { delete o[k]; } catch {} } return swap(o); };
+  const gen = (function* () { yield 1; })();
+  for (const o of [bare(Promise.resolve(1)), bare(new Error("e")), bare(new Map([[1, 2]]).entries()), bare(new Set([1]).values()), bare(gen)]) {
+    assert.deepEqual(Reflect.ownKeys(o), [], "fixture must have no own keys so that only the built-in check can reject it");
+    rejectsPlain({ ...prod, notes: o });
+  }
   // boxed primitives (even with a swapped prototype) carry a value JSON cannot represent as data: reject, never drop
   rejectsPlain({ ...prod, notes: Object(5) });
   rejectsPlain({ ...prod, notes: Object.setPrototypeOf(Object(1n), null) });

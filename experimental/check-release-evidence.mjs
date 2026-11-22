@@ -77,7 +77,7 @@
 //     primitive counts, the record itself included, each time it is reached), containing a circular reference, or that
 //     cannot be serialised (for example a BigInt) is rejected before any other check; evaluate() does not throw for such
 //     records. Records that are not plain JSON data (accessor properties, proxies, a toJSON of any enumerability, class instances,
-//     array subclasses, objects from another realm (except a null-prototype one, which is plain data), boxed primitives, objects with internal slots (Date, Map, Set, typed arrays, RegExp, Error and similar, even with a swapped prototype), module namespaces, any own key named toJSON, extra array properties, non-enumerable own properties or indices, undefined, function or symbol values) are rejected by the same walk without invoking anything; the record is then evaluated and secret-scanned as one JSON snapshot.
+//     array subclasses, objects from another realm (except a null-prototype one, which is plain data), boxed primitives, objects that util.types identifies as built-ins with internal slots (Date, Map, Set, typed arrays, Promise, Error, generators, Map and Set iterators; even with a swapped prototype), module namespaces, any own key named toJSON, extra array properties, non-enumerable own properties or indices, undefined, function or symbol values) are rejected by the same walk without invoking anything; the record is then evaluated and secret-scanned as one JSON snapshot.
 //   - core group names (CORE) may not appear as a key at ANY depth (objects and arrays) inside any non-core top-level
 //     namespace (profile redefinition).
 // A top-level residualRisks or testRuns that is present must be an array (0.1.0). The content of residualRisks is not
@@ -183,7 +183,8 @@ export const MAX_NODES = 1000000;
 const NOT_JSON = "record contains a value that is not JSON (undefined, function or symbol)";
 // Built-ins with internal slots hold data that a property walk cannot see (Map and Set contents, typed-array bytes, a Date value). With a swapped
 // prototype they would otherwise snapshot as plain data and their contents would be silently dropped, so they are never plain data.
-const HAS_SLOTS = [types.isDate, types.isMap, types.isSet, types.isWeakMap, types.isWeakSet, types.isPromise, types.isTypedArray, types.isAnyArrayBuffer, types.isDataView, types.isRegExp, types.isNativeError, types.isGeneratorObject, types.isArgumentsObject, types.isMapIterator, types.isSetIterator];
+// This is best effort: an object whose hidden state no reflective API exposes (a class with #private fields, a WeakRef, a URL, an Intl object) behind a prototype deliberately swapped to Object.prototype is indistinguishable from {}. That is out of scope, like a polluted Object.prototype: such an object holds no property the record can be read through.
+const HAS_SLOTS = [types.isDate, types.isMap, types.isSet, types.isWeakMap, types.isWeakSet, types.isPromise, types.isTypedArray, types.isAnyArrayBuffer, types.isDataView, types.isNativeError, types.isGeneratorObject, types.isMapIterator, types.isSetIterator];
 const NOT_PLAIN = "record must be plain JSON data (no accessors, proxies, custom toJSON or class instances)";
 const TOO_MANY = "record has more than " + MAX_NODES + " values";
 // Builds the one JSON snapshot that the whole evaluation and the secret scan use. Returns { error } or { value }. It reads
