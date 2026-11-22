@@ -1,0 +1,2 @@
+schemas/*.json text eol=lf
+schemas/*.sha256 text eol=lf

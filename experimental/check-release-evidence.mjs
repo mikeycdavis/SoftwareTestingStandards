@@ -1,5 +1,11 @@
-// EXPERIMENTAL: draft checker used only to exercise rejection fixtures. Not the schema; not frozen (C1). Field names,
-// stages and outcomes here are proposals (see docs/design/swt-b04-evidence-envelope-proposal.md) and may change.
+// EXPERIMENTAL checker. The core structure it evaluates is frozen as release-evidence core 0.1.0 by
+// schemas/release-evidence.core.0.1.0.schema.json (see docs/design/swt-core-0.1.0-freeze.md for exactly what is frozen
+// and what stays open). The frozen parts are: the single envelope with per-kind branches (testRuns[] entries), tests[]
+// as required test identities, source.dirty, the not-evaluated outcome (including the production-required set: artifact.digest,
+// non-empty tests[], testRuns[] covering every test, source.dirty, signing.status and the stage and signing enums, and that a declared signing status
+// not-evaluated never passes unless signing.notApplicable is declared, and a declared signing status failed rejects at every stage), the plural residualRisks[] and testRuns[]
+// names, and the shape of evaluate()'s result. Everything
+// else here, including the secret scan, is NOT frozen and may change.
 //
 // Outcomes: evaluate(record) returns { verdict: "pass" | "reject" | "not-evaluated", errors, notEvaluated }.
 //   - A present-but-invalid value always rejects. A key that is present counts as present whatever its value (null included).
@@ -11,9 +17,13 @@
 //   yields an empty (passing) list.
 //
 // Validated here, and nothing else:
-//   - required fields: artifact.digest (non-empty string); tests (non-empty array of objects); per test, evidenceKind
-//     (automated | manual) and artifactDigest (non-empty string, equal to artifact.digest when that is valid); for
-//     automated tests only, command (non-empty string) and exitCode (must be 0); signing.status (not-evaluated | attested |
+//   - required fields: artifact.digest (non-empty string); tests (non-empty array of objects, each with a unique non-blank
+//     id: the required test identities); testRuns (execution evidence: every test needs at least one run with its id, an
+//     unmatched test is not-evaluated below production and rejected at production, and a run naming no test is rejected);
+//     per run, testId, evidenceKind (automated | manual) and artifactDigest (non-empty string, equal to artifact.digest
+//     when that is valid); for automated runs only, command (non-empty string) and exitCode (must be 0); signing.status
+//     (a declared not-evaluated never passes: the verdict is not-evaluated unless signing.notApplicable declares a non-blank
+//     basis and attestedBy; notApplicable is rejected when malformed or alongside any other status; a declared failed always rejects) (not-evaluated | attested |
 //     ingested | failed); stage (internal | test | staged | production); source.dirty (boolean, required at every stage).
 //   - stage "production" additionally requires source.dirty === false (a dirty source is valid below production).
 //   - test.manual is optional; when present it must be a boolean (manual: "false", 1, null are rejected as an invalid
@@ -66,10 +76,13 @@
 //   - robustness: a record nested deeper than MAX_DEPTH levels, with more than MAX_NODES values (every object, array and
 //     primitive counts, the record itself included, each time it is reached), containing a circular reference, or that
 //     cannot be serialised (for example a BigInt) is rejected before any other check; evaluate() does not throw for such
-//     records.
+//     records. Records that are not plain JSON data (accessor properties, proxies, a toJSON of any enumerability, class instances,
+//     array subclasses, objects from another realm (except a null-prototype one, which is plain data), boxed primitives, objects that util.types identifies as built-ins with internal slots (such as Date, WeakMap, ArrayBuffer, DataView, arguments objects, Map, Set, typed arrays, Promise, Error, generators, Map and Set iterators; even with a swapped prototype), module namespaces, any own key named toJSON, extra array properties, non-enumerable own properties or indices, undefined, function or symbol values) are rejected by the same walk without invoking anything; the record is then evaluated and secret-scanned as one JSON snapshot.
 //   - core group names (CORE) may not appear as a key at ANY depth (objects and arrays) inside any non-core top-level
 //     namespace (profile redefinition).
-// NOT validated here: approvals, residualRisks, testRuns, rollback, provenance and distribution are neither required
+// A top-level residualRisks or testRuns that is present must be an array (0.1.0). The content of residualRisks is not
+// validated; every testRuns entry is validated as an envelope (see above). Extra fields on a tests[] entry are ignored.
+// NOT validated here: approvals, the content of residualRisks, rollback, provenance and distribution are neither required
 // nor checked (they are in CORE only to block profile redefinition); source.revision, artifact.id, schemaVersion,
 // timestamps, environment, result, retention and the remaining content of the manual branch (beyond its digest binding and the absence of command/exitCode); core
 // group names nested inside core groups; unknown top-level keys whose values are not objects or arrays.
@@ -78,10 +91,11 @@ const isObj = (v) => v !== null && typeof v === "object" && !Array.isArray(v);
 const nonEmpty = (v) => typeof v === "string" && v.trim() !== "";
 const ABSENT = Symbol("absent");
 const INVALID = Symbol("invalid");
+import { types } from "node:util";
 export const CORE = ["source", "artifact", "tests", "testRuns", "signing", "stage", "approvals", "residualRisks", "rollback", "provenance", "distribution"];
-const SIGNING = ["not-evaluated", "attested", "ingested", "failed"];
-const STAGES = ["internal", "test", "staged", "production"];
-const KINDS = ["automated", "manual"];
+export const SIGNING = ["not-evaluated", "attested", "ingested", "failed"];
+export const STAGES = ["internal", "test", "staged", "production"];
+export const KINDS = ["automated", "manual"];
 // One pattern per alternative so each is covered by its own fixture. Case-sensitive except where flagged "i".
 // The scan runs over JSON.stringify(record), so a double quote inside a string value appears as \" and a tab as \t.
 const R = String.raw;
@@ -163,37 +177,78 @@ const field = (g, key) => (g === ABSENT || !has(g, key) ? ABSENT : g[key]);
 
 export const MAX_DEPTH = 256;
 export const MAX_NODES = 1000000;
-// Iterative walk (no recursion, so no stack overflow): returns an error string for a record that is too deep, too large
-// or circular, else null. A value shared by two parents without a cycle is not circular. Every value counts toward
-// MAX_NODES (the record itself, each object and array, and each primitive), counting a value each time it is reached.
-// The count is checked before a child is scheduled, so the walk's own allocation is bounded by MAX_NODES.
+// Limits for the snapshot walk below (which is iterative, so no recursion and no stack overflow). A value shared by two
+// parents without a cycle is not circular. Every value counts toward MAX_NODES (the record itself, each object and array
+// and each primitive), counting a value each time it is reached. The count is checked before a child is scheduled.
+const NOT_JSON = "record contains a value that is not JSON (undefined, function or symbol)";
+// Built-ins with internal slots hold data that a property walk cannot see (Map and Set contents, typed-array bytes, a Date value). With a swapped
+// prototype they would otherwise snapshot as plain data and their contents would be silently dropped, so they are never plain data.
+// A host object that forwards reflection to caller code (the global of a vm context built over a Proxy sandbox) with its prototype swapped to Object.prototype or null cannot be told from a plain object by any reflective call and is out of scope like a polluted Object.prototype: it requires deliberately building such a context, and its keys are read through the caller's traps.
+// This is best effort, and the residual is not a gap in the verdict: an object whose hidden state generic reflection cannot reach (a class with #private fields, or a WeakRef, URL, Intl object or iterator, with its prototype deliberately swapped to Object.prototype) snapshots exactly as JSON.stringify of the caller's original would (as {}), so the JSON record that is stored or consumed never held that state, no code runs, and evaluation and the secret scan see the same values.
+const HAS_SLOTS = [types.isDate, types.isMap, types.isSet, types.isWeakMap, types.isWeakSet, types.isPromise, types.isTypedArray, types.isAnyArrayBuffer, types.isDataView, types.isNativeError, types.isArgumentsObject, types.isGeneratorObject, types.isMapIterator, types.isSetIterator];
+const NOT_PLAIN = "record must be plain JSON data (no accessors, proxies, custom toJSON or class instances)";
 const TOO_MANY = "record has more than " + MAX_NODES + " values";
-function shapeError(r) {
-  const stack = [{ v: r, d: 1 }];
+// Builds the one JSON snapshot that the whole evaluation and the secret scan use. Returns { error } or { value }. It reads
+// only property descriptors, so no getter, setter, proxy trap, valueOf or toJSON can run, and it copies into plain
+// null-prototype objects (and ordinary arrays), so no toJSON of the caller's can run later. A globally polluted Object.prototype or Array.prototype (a toJSON added to a built-in prototype) is out of scope: it is not something a record can do.
+// A record must be plain JSON data: accessors, proxies, an own toJSON of any kind, non-plain prototypes (class instances, array subclasses, objects from another realm) and
+// extra non-index array properties and non-enumerable own properties are rejected, symbol-keyed properties and non-finite numbers (NaN, Infinity) are rejected too, as are undefined, function and symbol values (JSON.stringify would
+// silently drop them and turn an invalid present value into an absent one). A hole in an array becomes null, as in JSON.
+function snapshotOf(r) {
+  const root = { v: r, d: 1, set: (x) => { root.out = x; } };
+  const stack = [root];
   const onPath = new Set();
   let nodes = 1;
-  const schedule = (x, d) => { if (x !== null && typeof x === "object") stack.push({ v: x, d }); };
   while (stack.length) {
     const f = stack.pop();
     if (f.exit) { onPath.delete(f.v); continue; }
     const v = f.v;
-    if (onPath.has(v)) return "record contains a circular reference";
-    if (f.d > MAX_DEPTH) return "record nesting deeper than " + MAX_DEPTH + " levels";
+    if (typeof v === "bigint") return { error: "record cannot be serialised" };
+    if (v === undefined || typeof v === "function" || typeof v === "symbol") return { error: NOT_JSON };
+    if (typeof v === "number" && !Number.isFinite(v)) return { error: NOT_JSON }; // JSON would turn NaN/Infinity into null: evaluation and scan must see the same value
+    if (v === null || typeof v !== "object") { f.set(v); continue; }
+    if (types.isProxy(v) || types.isBoxedPrimitive(v) || types.isModuleNamespaceObject(v) || HAS_SLOTS.some((f) => f(v))) return { error: NOT_PLAIN };
+    if (onPath.has(v)) return { error: "record contains a circular reference" };
+    if (f.d > MAX_DEPTH) return { error: "record nesting deeper than " + MAX_DEPTH + " levels" };
     onPath.add(v);
     stack.push({ v, exit: true });
+    const proto = Object.getPrototypeOf(v);
+    // the prototype is checked before any key is read: reading keys of a host object (a vm context global) can forward to caller code
+    if (Array.isArray(v) ? proto !== Array.prototype : (proto !== Object.prototype && proto !== null)) return { error: NOT_PLAIN };
+    const names = Reflect.ownKeys(v);
+    if (names.some((k) => typeof k === "symbol")) return { error: NOT_PLAIN }; // a symbol-keyed property is not JSON data: never dropped silently
+    if (names.includes("toJSON")) return { error: NOT_PLAIN };
     if (Array.isArray(v)) {
-      if (nodes + v.length > MAX_NODES) return TOO_MANY;
+      if (proto !== Array.prototype) return { error: NOT_PLAIN };
+      if (nodes + v.length > MAX_NODES) return { error: TOO_MANY };
       nodes += v.length;
-      for (let i = 0; i < v.length; i++) schedule(v[i], f.d + 1);
+      const out = new Array(v.length).fill(null);
+      f.set(out);
+      for (const k of names) {
+        if (k === "length") continue;
+        if (!/^(?:0|[1-9][0-9]*)$/.test(k) || Number(k) >= v.length) return { error: NOT_PLAIN };
+      }
+      for (let i = 0; i < v.length; i++) {
+        const d = Object.getOwnPropertyDescriptor(v, i);
+        if (!d) continue;
+        if (d.get || d.set) return { error: NOT_PLAIN };
+        if (!d.enumerable) return { error: NOT_PLAIN }; // JSON would not drop it, but it is not plain data and must not pass silently
+        stack.push({ v: d.value, d: f.d + 1, set: (x) => { out[i] = x; } });
+      }
     } else {
-      for (const k in v) {
-        if (!Object.prototype.hasOwnProperty.call(v, k)) continue;
-        if (++nodes > MAX_NODES) return TOO_MANY;
-        schedule(v[k], f.d + 1);
+      if (proto !== Object.prototype && proto !== null) return { error: NOT_PLAIN };
+      const out = Object.create(null);
+      f.set(out);
+      for (const k of [...names].reverse()) { // reversed so the LIFO stack defines keys in record order
+        const d = Object.getOwnPropertyDescriptor(v, k);
+        if (d.get || d.set) return { error: NOT_PLAIN };
+        if (!d.enumerable) return { error: NOT_PLAIN }; // JSON would drop it, turning a present invalid value into an absent one
+        if (++nodes > MAX_NODES) return { error: TOO_MANY };
+        stack.push({ v: d.value, d: f.d + 1, set: (x) => { Object.defineProperty(out, k, { value: x, enumerable: true, writable: true, configurable: true }); } });
       }
     }
   }
-  return null;
+  return { value: root.out };
 }
 
 function coreKeysIn(v, path, out) {
@@ -205,10 +260,16 @@ function coreKeysIn(v, path, out) {
   return out;
 }
 
-export function evaluate(r) {
-  if (!isObj(r)) return { verdict: "reject", errors: ["record must be an object"], notEvaluated: [] };
-  const shape = shapeError(r);
-  if (shape) return { verdict: "reject", errors: [shape], notEvaluated: [] };
+export function evaluate(input) {
+  if (types.isProxy(input)) return { verdict: "reject", errors: [NOT_PLAIN], notEvaluated: [] };
+  if (!isObj(input)) return { verdict: "reject", errors: ["record must be an object"], notEvaluated: [] };
+  let snap;
+  try { snap = snapshotOf(input); } catch { snap = { error: NOT_PLAIN }; } // defence in depth: evaluate() must not throw
+  if (snap.error) return { verdict: "reject", errors: [snap.error], notEvaluated: [] };
+  // r is the one snapshot: every check below and the secret scan read these values, never the caller's object again.
+  const r = snap.value;
+  let text;
+  try { text = JSON.stringify(r); } catch { return { verdict: "reject", errors: ["record cannot be serialised"], notEvaluated: [] }; }
   const errors = [];
   const notEvaluated = [];
   const stage = has(r, "stage") ? r.stage : ABSENT;
@@ -220,6 +281,19 @@ export function evaluate(r) {
     const status = field(signing, "status");
     if (status === ABSENT) absent("signing.status required");
     else if (!SIGNING.includes(status)) errors.push("signing.status required and in enum (invalid value is rejected)");
+    // signing.notApplicable: { basis, attestedBy }, both non-blank strings. Valid only with status "not-evaluated". A
+    // declared status "not-evaluated" without it never passes: the verdict stays not-evaluated, at every stage.
+    const na = field(signing, "notApplicable");
+    if (na !== ABSENT) {
+      if (!isObj(na)) errors.push("signing.notApplicable must be an object with basis and attestedBy");
+      else {
+        if (!nonEmpty(na.basis)) errors.push("signing.notApplicable.basis required (non-empty string)");
+        if (!nonEmpty(na.attestedBy)) errors.push("signing.notApplicable.attestedBy required (non-empty string)");
+      }
+      if (status !== ABSENT && SIGNING.includes(status) && status !== "not-evaluated") errors.push("signing.notApplicable is only valid with status not-evaluated");
+    }
+    if (status === "failed") errors.push("signing.status is failed (a failed signing check is a rejection at every stage)");
+    if (status === "not-evaluated" && na === ABSENT) notEvaluated.push("signing.status is not-evaluated and not declared not applicable (not a pass)");
   }
 
   const artifact = group(r, "artifact", errors);
@@ -231,10 +305,33 @@ export function evaluate(r) {
     else artifactDigest = d;
   }
 
+  // tests[] = the REQUIRED test identities: a non-empty array of objects, each with a unique non-blank string id.
+  // testRuns[] = EXECUTION EVIDENCE: each run is one envelope bound to a test by testId. Every valid required test must
+  // have at least one run with its id; an unmatched requirement can never pass (not-evaluated below production, rejected
+  // at production). The mapping is skipped for a testRuns that is present but not an array (the type error is reported).
+  const testIds = new Set();
+  let testsListed = false;
   if (!has(r, "tests")) absent("tests required and non-empty (no tests is not a pass)");
   else if (!Array.isArray(r.tests) || r.tests.length === 0) errors.push("tests required and non-empty (no tests is not a pass)");
-  else Array.from(r.tests).forEach((t, i) => { // Array.from turns holes into undefined, so a sparse array rejects
-    if (!isObj(t)) { errors.push("tests[" + i + "] must be an object"); return; }
+  else {
+    testsListed = true;
+    Array.from(r.tests).forEach((t, i) => { // the snapshot turns a hole into null, so a sparse array rejects as a non-object
+      if (!isObj(t)) { errors.push("tests[" + i + "] must be an object"); return; }
+      if (!has(t, "id")) absent("tests[" + i + "].id required (test identity)");
+      else if (!nonEmpty(t.id)) errors.push("tests[" + i + "].id required (non-empty string)");
+      else if (testIds.has(t.id)) errors.push("duplicate test id: " + t.id);
+      else testIds.add(t.id);
+    });
+  }
+  const runCount = new Map();
+  if (has(r, "testRuns") && Array.isArray(r.testRuns)) Array.from(r.testRuns).forEach((t, i) => {
+    if (!isObj(t)) { errors.push("testRuns[" + i + "] must be an object"); return; }
+    if (!has(t, "testId")) absent("testRuns[" + i + "].testId required (binding to a test)");
+    else if (!nonEmpty(t.testId)) errors.push("testRuns[" + i + "].testId required (non-empty string)");
+    else if (testsListed) {
+      if (!testIds.has(t.testId)) errors.push("run references unknown test: " + t.testId);
+      else runCount.set(t.testId, (runCount.get(t.testId) || 0) + 1);
+    }
     if (!has(t, "artifactDigest")) absent("test artifactDigest required (missing binding)");
     else if (!nonEmpty(t.artifactDigest)) errors.push("test artifactDigest required (missing binding: not a non-empty string)");
     else if (artifactDigest !== undefined && t.artifactDigest !== artifactDigest) errors.push("test bound to a different digest");
@@ -257,9 +354,16 @@ export function evaluate(r) {
       if (has(t, "exitCode")) errors.push("manual evidence must not carry exitCode");
     }
   });
+  if (testsListed && !(has(r, "testRuns") && !Array.isArray(r.testRuns))) {
+    for (const id of testIds) if (!runCount.has(id)) absent("test " + id + " has no applicable run (an unmatched requirement cannot pass)");
+  }
 
   if (stage === ABSENT) absent("stage required and in enum: internal, test, staged, production");
   else if (!STAGES.includes(stage)) errors.push("stage required and in enum: internal, test, staged, production");
+
+  // residualRisks and testRuns are reserved plural core names (0.1.0): when present at the top level they must be arrays.
+  // residualRisks content is not defined or validated in 0.1.0; testRuns entries are validated as envelopes above.
+  for (const name of ["residualRisks", "testRuns"]) if (has(r, name) && !Array.isArray(r[name])) errors.push(name + " must be an array");
 
   const source = group(r, "source", errors);
   const dirty = source === INVALID ? INVALID : field(source, "dirty");
@@ -267,8 +371,6 @@ export function evaluate(r) {
   else if (dirty !== INVALID && typeof dirty !== "boolean") errors.push("source.dirty required (boolean)");
   if (production && dirty !== false) errors.push("production requires source.dirty === false (dirty or missing is rejected)");
 
-  let text;
-  try { text = JSON.stringify(r); } catch { return { verdict: "reject", errors: ["record cannot be serialised"], notEvaluated: [] }; }
   for (const name of scanSecrets(text)) errors.push("secret material present: " + name);
 
   for (const ns of Object.keys(r)) {

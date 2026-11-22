@@ -1,0 +1,1 @@
+{"verdict":"reject","reason":"testRuns must be an array","case":"toplevel-testruns-not-array","schemaVersion":"0.0.0-draft","artifact":{"id":"app","digest":"sha256:aaaa"},"source":{"revision":"abc123","dirty":false},"tests":[{"id":"t0"}],"testRuns":{},"signing":{"status":"attested"},"stage":"production"}

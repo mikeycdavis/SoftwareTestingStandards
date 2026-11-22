@@ -1,1 +1,1 @@
-{"verdict":"reject","case":"production-no-tests","schemaVersion":"0.0.0-draft","artifact":{"id":"app","digest":"sha256:aaaa"},"source":{"revision":"abc123","dirty":false},"signing":{"status":"not-evaluated"},"stage":"production","reason":"tests required"}
+{"verdict":"reject","case":"production-no-tests","schemaVersion":"0.0.0-draft","artifact":{"id":"app","digest":"sha256:aaaa"},"source":{"revision":"abc123","dirty":false},"signing":{"status":"attested"},"stage":"production","reason":"tests required"}
