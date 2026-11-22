@@ -33,4 +33,4 @@ The schema describes present values. It cannot say "absent is not-evaluated" or 
 
 ## Changes in this PR beyond the schema
 
-The experimental checker moves the envelope checks from `tests[]` to `testRuns[]`, adds identity, uniqueness and mapping checks, adds the signing rule, rejects a top-level `testRuns` or `residualRisks` that is present but not an array, and its header points at this freeze. All existing fixtures were migrated mechanically (each former test entry became an identity plus a run, and a declared `not-evaluated` signing status in a passing fixture became `attested`); new fixtures cover mapping and signing.
+The experimental checker moves the envelope checks from `tests[]` to `testRuns[]`, adds identity, uniqueness and mapping checks, adds the signing rule, rejects a top-level `testRuns` or `residualRisks` that is present but not an array, and its header points at this freeze. All existing fixtures were migrated mechanically (each former test entry became an identity plus a run, and a declared `not-evaluated` signing status became `attested` in every migrated fixture except those about signing itself); new fixtures cover mapping and signing.
