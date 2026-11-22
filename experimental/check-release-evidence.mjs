@@ -223,6 +223,7 @@ function snapshotOf(r) {
         const d = Object.getOwnPropertyDescriptor(v, i);
         if (!d) continue;
         if (d.get || d.set) return { error: NOT_PLAIN };
+        if (!d.enumerable) return { error: NOT_PLAIN }; // JSON would not drop it, but it is not plain data and must not pass silently
         stack.push({ v: d.value, d: f.d + 1, set: (x) => { out[i] = x; } });
       }
     } else {

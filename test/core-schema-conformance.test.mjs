@@ -205,7 +205,12 @@ test("records are plain JSON data judged as one snapshot: accessors, proxies, to
   const ne3 = { ...prod }; hide(ne3, "residualRisks", "x");
   const ne4 = { ...prod, stage: "internal", signing: { } }; hide(ne4.signing, "status", "failed");
   const ne5 = { ...prod, stage: "internal" }; hide(ne5, "tests", "");
-  for (const ne of [ne1, ne2, ne3, ne4, ne5]) rejectsPlain(ne);
+  // a non-enumerable array index is not plain data either (valid otherwise, so only the plain rule can reject it)
+  const hideIdx = (arr, i) => Object.defineProperty(arr, i, { value: arr[i], enumerable: false, writable: true, configurable: true });
+  const ne6 = { ...prod, tests: [...prod.tests] }; hideIdx(ne6.tests, 0);
+  const ne7 = { ...prod, testRuns: [...prod.testRuns] }; hideIdx(ne7.testRuns, 0);
+  const ne8 = { ...prod, residualRisks: [{ owner: "x" }] }; hideIdx(ne8.residualRisks, 0);
+  for (const ne of [ne1, ne2, ne3, ne4, ne5, ne6, ne7, ne8]) rejectsPlain(ne);
   // a revoked proxy as the whole record does not throw
   const rev = Proxy.revocable({}, {}); rev.revoke();
   rejectsPlain(rev.proxy);
